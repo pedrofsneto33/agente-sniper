@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AGENTE SNIPER v11.5.1
+AGENTE SNIPER v11.8.0
 Motor genérico de inteligência competitiva com memória histórica.
 
 OBJETIVO
@@ -240,7 +240,7 @@ PRICE_NONCOMMERCIAL_URL_HINTS = [
 # só porque elas mencionam a empresa-alvo/concorrente.
 PRICE_NEGATIVE_PATH_HINTS = PRICE_NONCOMMERCIAL_URL_HINTS
 
-# v11.7
+# v11.8
 EVENT_DATE_CLUSTER_DAYS = int(os.getenv("EVENT_DATE_CLUSTER_DAYS", "45"))
 EVENT_TITLE_SIM_THRESHOLD = float(os.getenv("EVENT_TITLE_SIM_THRESHOLD", "0.52"))
 EVENT_TOKEN_SIM_THRESHOLD = float(os.getenv("EVENT_TOKEN_SIM_THRESHOLD", "0.30"))
@@ -380,7 +380,7 @@ if not logger.handlers:
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/151.0 Safari/537.36 AgenteSniper/11.7.0"
+    "Chrome/151.0 Safari/537.36 AgenteSniper/11.8.0"
 )
 
 # ============================================================

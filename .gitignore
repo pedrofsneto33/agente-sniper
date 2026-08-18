@@ -27,3 +27,5 @@ venv/
 
 # Logs
 *.log
+# Arquivos legados / backups históricos
+legacy_archive/
