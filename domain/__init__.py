@@ -41,6 +41,7 @@ from domain.events import (
     criar_eventos,
 )
 from domain.deltas import calcular_delta_fontes
+from domain.pricing import detectar_mudancas_preco
 
 __all__ = [
     "Fonte",
@@ -75,4 +76,5 @@ __all__ = [
     "eventos_sao_mesmo_fato",
     "criar_eventos",
     "calcular_delta_fontes",
+    "detectar_mudancas_preco",
 ]

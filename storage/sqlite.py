@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from domain.models import Fonte
 from domain.identity import sha1
 from domain.deltas import calcular_delta_fontes
+from domain.pricing import detectar_mudancas_preco
 
 
 class MemoriaSniper:
@@ -144,37 +145,19 @@ class MemoriaSniper:
     ) -> Dict[str, Any]:
         """Persiste snapshots de preços e rastreia variações percentuais/promocionais."""
         prev = self.previous_run()
-        old_prices: Dict[Tuple[str, str, str], Tuple[Optional[float], bool]] = {}
+        old_prices: Optional[Dict[Tuple[str, str, str], Tuple[Optional[float], bool]]] = None
         if prev:
+            old_prices = {}
             for r in self.conn.execute(
                 "SELECT entity, source_domain, product_key, price, promotion FROM price_snapshots WHERE run_id=?",
                 (prev,)
             ):
                 old_prices[(r["entity"], r["source_domain"], r["product_key"])] = (r["price"], bool(r["promotion"]))
 
-        changes: List[Dict[str, Any]] = []
+        changes = detectar_mudancas_preco(snapshots, old_prices, min_change_pct=min_change_pct)
         timestamp = captured_at or datetime.now().isoformat(timespec="seconds")
 
         for x in snapshots:
-            key = (x.get("entity", ""), x.get("source_domain", ""), x.get("product_key", ""))
-            old = old_prices.get(key)
-            if old and x.get("price") is not None and old[0] not in (None, 0):
-                pct = (float(x["price"]) - float(old[0])) / float(old[0]) * 100
-                promo_changed = bool(x.get("promotion")) != old[1]
-                if abs(pct) >= min_change_pct or promo_changed:
-                    changes.append({
-                        "entity": x.get("entity"),
-                        "source_domain": x.get("source_domain"),
-                        "product_key": x.get("product_key"),
-                        "product_name": x.get("product_name"),
-                        "previous_price": old[0],
-                        "current_price": x.get("price"),
-                        "change_pct": round(pct, 2),
-                        "promotion_before": old[1],
-                        "promotion_now": bool(x.get("promotion")),
-                        "url": x.get("url", "")
-                    })
-
             self.conn.execute(
                 "INSERT OR REPLACE INTO price_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -199,7 +182,7 @@ class MemoriaSniper:
         return {
             "previous_run": prev,
             "gravados": len(snapshots),
-            "mudancas": changes[:100]
+            "mudancas": changes
         }
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
