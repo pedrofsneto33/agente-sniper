@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from domain.models import Fonte
 from domain.identity import sha1
+from domain.deltas import calcular_delta_fontes
 
 
 class MemoriaSniper:
@@ -119,23 +120,19 @@ class MemoriaSniper:
 
         self.conn.commit()
 
-        novos = set()
-        alterados = set()
+        old_hashes: Optional[Dict[str, str]] = None
         if prev:
-            old = {
+            old_hashes = {
                 r["fingerprint"]: r["content_hash"]
                 for r in self.conn.execute("SELECT fingerprint, content_hash FROM sources WHERE run_id=?", (prev,))
             }
-            for f in fontes:
-                if f.fingerprint not in old:
-                    novos.add(f.fingerprint)
-                elif old[f.fingerprint] != sha1(f.conteudo):
-                    alterados.add(f.fingerprint)
+
+        delta = calcular_delta_fontes(fontes, old_hashes)
 
         return {
             "previous_run": prev,
-            "novas_fontes": len(novos),
-            "fontes_alteradas": len(alterados)
+            "novas_fontes": delta["novas_fontes"],
+            "fontes_alteradas": delta["fontes_alteradas"]
         }
 
     def save_price_snapshots(

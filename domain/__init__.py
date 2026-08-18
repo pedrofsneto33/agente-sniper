@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Pacote de Domínio — Agente Sniper
 Camada de lógica de negócio pura, modelos de dados e regras canônicas sem dependências de infraestrutura.
@@ -40,6 +40,7 @@ from domain.events import (
     eventos_sao_mesmo_fato,
     criar_eventos,
 )
+from domain.deltas import calcular_delta_fontes
 
 __all__ = [
     "Fonte",
@@ -73,4 +74,5 @@ __all__ = [
     "_primary_event_kind",
     "eventos_sao_mesmo_fato",
     "criar_eventos",
+    "calcular_delta_fontes",
 ]
