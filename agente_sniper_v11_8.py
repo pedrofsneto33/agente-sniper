@@ -60,7 +60,6 @@ import hashlib
 import json
 import logging
 import os
-import random
 import re
 import sqlite3
 import sys
@@ -129,9 +128,7 @@ SEMANA_ID = HOJE.strftime("%Y-W%U")
 EMPRESA_ALVO = os.getenv("EMPRESA_ALVO", "Supermercado Carvalho").strip()
 CIDADE = os.getenv("CIDADE", "Teresina").strip()
 ESTADO = os.getenv("ESTADO", "PI").strip()
-PAIS = os.getenv("PAIS", "Brasil").strip()
 NICHO = os.getenv("NICHO", "supermercado").strip().lower()
-DESCRICAO_EMPRESA = os.getenv("DESCRICAO_EMPRESA", "").strip()
 
 ALIASES_ENV = os.getenv("EMPRESA_ALIASES", "").strip()
 if ALIASES_ENV:
@@ -153,7 +150,6 @@ ANO_MINIMO_ATUAL = int(os.getenv("ANO_MINIMO_ATUAL", str(max(2025, HOJE.year - 1
 ANO_MINIMO_HISTORICO = int(os.getenv("ANO_MINIMO_HISTORICO", "2020"))
 MAX_FONTES_FINAIS = int(os.getenv("MAX_FONTES_FINAIS", "80"))
 MAX_ENRIQUECIMENTO = min(int(os.getenv("MAX_ENRIQUECIMENTO", "16")), 16)
-MAX_FONTES_POR_DIMENSAO = int(os.getenv("MAX_FONTES_POR_DIMENSAO", "12"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "18"))
 PLAYWRIGHT_ATIVO = os.getenv("USAR_PLAYWRIGHT", "0") == "1"
 
@@ -176,8 +172,6 @@ PRICE_CRAWL_LINK_LIMIT = min(int(os.getenv("PRICE_CRAWL_LINK_LIMIT", "20")), 20)
 PRICE_MAX_DOMAINS_PER_ENTITY = int(os.getenv("PRICE_MAX_DOMAINS_PER_ENTITY", "4"))
 PRICE_REQUIRE_COMMERCIAL_SIGNAL = os.getenv("PRICE_REQUIRE_COMMERCIAL_SIGNAL", "1") == "1"
 PRICE_HISTORY_MIN_CHANGE_PCT = float(os.getenv("PRICE_HISTORY_MIN_CHANGE_PCT", "0.5"))
-PRICE_HISTORY_KEEP_DAYS = int(os.getenv("PRICE_HISTORY_KEEP_DAYS", "365"))
-PRICE_INCLUDE_UNDATED = os.getenv("PRICE_INCLUDE_UNDATED", "0") == "1"
 PRICE_DISCOVERY_PATH_HINTS = [
     x.strip().lower() for x in os.getenv(
         "PRICE_DISCOVERY_PATH_HINTS",
@@ -291,7 +285,6 @@ def carregar_price_sources() -> List[Dict[str, Any]]:
 PRICE_SOURCES = carregar_price_sources()
 PRICE_AUTO_SEARCH_COMMERCIAL = os.getenv("PRICE_AUTO_SEARCH_COMMERCIAL", "1") == "1"
 PRICE_COMMERCIAL_QUERY_LIMIT = int(os.getenv("PRICE_COMMERCIAL_QUERY_LIMIT", "3"))
-PRICE_HTTP_ONLY_FIRST = os.getenv("PRICE_HTTP_ONLY_FIRST", "1") == "1"
 PRICE_PLAYWRIGHT_TIMEOUT = min(int(os.getenv("PRICE_PLAYWRIGHT_TIMEOUT", "10000")), 10000)
 PRICE_MAX_HTTP_FETCHES = min(int(os.getenv("PRICE_MAX_HTTP_FETCHES", "30")), 30)
 _PRICE_HTTP_CACHE: Dict[str, Tuple[str, str, float]] = {}
@@ -1364,19 +1357,6 @@ def parse_money(value: Any) -> Optional[float]:
         return None
 
 
-def nome_produto_normalizado(name: str) -> str:
-    s = normalizar(name or "")
-    s = re.sub(r"\b(kg|g|mg|ml|l|litro|litros|un|und|unidade|cx|caixa|pacote|pct)\b", " ", s)
-    s = re.sub(r"\b\d+(?:[.,]\d+)?\b", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def tokens_produto(name: str) -> set:
-    stop = {"de", "da", "do", "e", "com", "sem", "para", "em", "tipo", "kit"}
-    return {x for x in nome_produto_normalizado(name).split() if len(x) > 2 and x not in stop}
-
-
 def normalizar_quantidade(unidade: str) -> Tuple[Optional[float], Optional[str]]:
     n = normalizar(unidade).replace(",", ".")
     m = re.search(r"(\d+(?:\.\d+)?)\s*(kg|g|mg|l|ml|un|und|unidade|unidades|m2|m²)", n)
@@ -1941,12 +1921,6 @@ def qualidade_fonte(f: Fonte) -> float:
     return min(1.0, base)
 
 
-def evidencia_evento(f: Fonte, kind: str) -> bool:
-    n = normalizar(f.texto())
-    keys = EVENT_RULES[kind]["keys"]
-    return sum(1 for k in keys if k in n) >= 1
-
-
 def evento_titulo_estavel(f: Fonte, kind: str) -> str:
     base=re.sub(r"\s+"," ",f.titulo or "").strip()
     generic={"instagram","facebook","youtube","google notícias","google noticias","reclame aqui","home","página inicial","pagina inicial"}
@@ -2433,17 +2407,6 @@ def inteligencia_deterministica(fontes: List[Fonte], events: List[Dict[str, Any]
 # ============================================================
 # 12. VALIDAÇÃO DE EVIDÊNCIAS
 # ============================================================
-
-# ============================================================
-# 12. VALIDAÇÃO DE EVIDÊNCIAS
-# ============================================================
-
-def fontes_referenciadas(texto: str) -> List[int]:
-    """Extrai somente referências válidas no formato literal [FONTE 123]."""
-    if not texto:
-        return []
-    return [int(x) for x in re.findall(r"\[FONTE\s+(\d+)\]", texto, flags=re.I)]
-
 
 def validar_ids_sinais(pacote: Dict[str, Any], ids_validos: set) -> Tuple[bool, str]:
     invalidos = []
