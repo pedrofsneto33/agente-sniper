@@ -112,6 +112,7 @@ from domain.events import (
     eventos_sao_mesmo_fato,
     criar_eventos as _domain_criar_eventos,
 )
+from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
 
 # ---------- dependências opcionais ----------
 try:
@@ -1557,120 +1558,44 @@ def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None
 # 8. MEMÓRIA HISTÓRICA SQLITE
 # ============================================================
 
-class MemoriaSniper:
-    def __init__(self, path: Path):
-        self.conn = sqlite3.connect(str(path))
-        self.conn.row_factory = sqlite3.Row
-        self._schema()
+class MemoriaSniper(_StorageMemoriaSniper):
+    """Adapter de compatibilidade para vincular constantes de ambiente globais."""
 
-    def _schema(self) -> None:
-        c = self.conn.cursor()
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS runs (
-            run_id TEXT PRIMARY KEY,
-            empresa TEXT,
-            nicho TEXT,
-            cidade TEXT,
-            estado TEXT,
-            created_at TEXT
-        )""")
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS sources (
-            run_id TEXT,
-            fingerprint TEXT,
-            url TEXT,
-            title TEXT,
-            category TEXT,
-            score REAL,
-            current INTEGER,
-            content_hash TEXT,
-            PRIMARY KEY (run_id, fingerprint)
-        )""")
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            run_id TEXT,
-            event_key TEXT,
-            kind TEXT,
-            title TEXT,
-            importance INTEGER,
-            evidence_ids TEXT,
-            created_at TEXT,
-            PRIMARY KEY (run_id, event_key)
-        )""")
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS price_snapshots (
-            run_id TEXT, entity TEXT, role TEXT, source_domain TEXT, product_key TEXT,
-            product_name TEXT, brand TEXT, unit TEXT, price REAL, old_price REAL, promotion INTEGER,
-            url TEXT, location_note TEXT, captured_at TEXT,
-            PRIMARY KEY (run_id, entity, source_domain, product_key)
-        )""")
-        self.conn.commit()
+    def save_run(
+        self,
+        run_id: str,
+        fontes: Sequence[Fonte],
+        events: Sequence[Dict[str, Any]],
+        empresa: str = EMPRESA_ALVO,
+        nicho: str = NICHO,
+        cidade: str = CIDADE,
+        estado: str = ESTADO,
+        created_at: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return super().save_run(
+            run_id=run_id,
+            fontes=fontes,
+            events=events,
+            empresa=empresa,
+            nicho=nicho,
+            cidade=cidade,
+            estado=estado,
+            created_at=created_at or HOJE.isoformat(timespec="seconds")
+        )
 
-    def previous_run(self) -> Optional[str]:
-        r = self.conn.execute("SELECT run_id FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
-        return str(r[0]) if r else None
-
-    def save_run(self, run_id: str, fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Any]:
-        prev = self.previous_run()
-        self.conn.execute("INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?)", (
-            run_id, EMPRESA_ALVO, NICHO, CIDADE, ESTADO, HOJE.isoformat(timespec="seconds")
-        ))
-        for f in fontes:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?,?)",
-                (run_id, f.fingerprint, f.url, f.titulo, f.categoria, f.score, int(f.atual), sha1(f.conteudo))
-            )
-        for e in events:
-            # Contrato canônico: eventos usam event_id.
-            # event_key é aceito como compatibilidade com versões antigas.
-            event_key = e.get("event_id") or e.get("event_key")
-            if not event_key:
-                raise ValueError(
-                    "Evento inválido: ausência de event_id/event_key. "
-                    f"kind={e.get('kind')!r}, title={e.get('title')!r}"
-                )
-            kind = str(e.get("kind") or "MOVIMENTO")
-            title = str(e.get("title") or "Evento sem título")
-            importance = int(float(e.get("importance", 0)))
-            evidence_ids = [int(x) for x in (e.get("evidence_ids") or []) if str(x).isdigit()]
-            self.conn.execute(
-                "INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,?)",
-                (run_id, event_key, kind, title, importance, json.dumps(evidence_ids), HOJE.isoformat(timespec="seconds"))
-            )
-        self.conn.commit()
-
-        novos = set()
-        alterados = set()
-        if prev:
-            old = {
-                r["fingerprint"]: r["content_hash"]
-                for r in self.conn.execute("SELECT fingerprint, content_hash FROM sources WHERE run_id=?", (prev,))
-            }
-            for f in fontes:
-                if f.fingerprint not in old:
-                    novos.add(f.fingerprint)
-                elif old[f.fingerprint] != sha1(f.conteudo):
-                    alterados.add(f.fingerprint)
-        return {"previous_run": prev, "novas_fontes": len(novos), "fontes_alteradas": len(alterados)}
-
-    def save_price_snapshots(self, run_id: str, snapshots: List[Dict[str, Any]]) -> Dict[str, Any]:
-        prev=self.previous_run()
-        old_prices={}
-        if prev:
-            for r in self.conn.execute("SELECT entity,source_domain,product_key,price,promotion FROM price_snapshots WHERE run_id=?", (prev,)):
-                old_prices[(r["entity"],r["source_domain"],r["product_key"])]=(r["price"],bool(r["promotion"]))
-        changes=[]
-        for x in snapshots:
-            key=(x.get("entity",""),x.get("source_domain",""),x.get("product_key",""))
-            old=old_prices.get(key)
-            if old and x.get("price") is not None and old[0] not in (None,0):
-                pct=(float(x["price"])-float(old[0]))/float(old[0])*100
-                promo_changed=bool(x.get("promotion")) != old[1]
-                if abs(pct)>=PRICE_HISTORY_MIN_CHANGE_PCT or promo_changed:
-                    changes.append({"entity":x.get("entity"),"source_domain":x.get("source_domain"),"product_key":x.get("product_key"),"product_name":x.get("product_name"),"previous_price":old[0],"current_price":x.get("price"),"change_pct":round(pct,2),"promotion_before":old[1],"promotion_now":bool(x.get("promotion")),"url":x.get("url","")})
-            self.conn.execute("INSERT OR REPLACE INTO price_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(run_id,x.get("entity",""),x.get("role",""),x.get("source_domain",""),x.get("product_key",""),x.get("product_name",""),x.get("brand",""),x.get("unit",""),x.get("price"),x.get("old_price"),int(bool(x.get("promotion"))),x.get("url",""),x.get("location_note",""),HOJE.isoformat(timespec="seconds")))
-        self.conn.commit()
-        return {"previous_run":prev,"gravados":len(snapshots),"mudancas":changes[:100]}
+    def save_price_snapshots(
+        self,
+        run_id: str,
+        snapshots: Sequence[Dict[str, Any]],
+        captured_at: Optional[str] = None,
+        min_change_pct: float = PRICE_HISTORY_MIN_CHANGE_PCT
+    ) -> Dict[str, Any]:
+        return super().save_price_snapshots(
+            run_id=run_id,
+            snapshots=snapshots,
+            captured_at=captured_at or HOJE.isoformat(timespec="seconds"),
+            min_change_pct=min_change_pct
+        )
 
 # ============================================================
 # 9. MOTOR DE EVENTOS, SINAIS E SCORES
