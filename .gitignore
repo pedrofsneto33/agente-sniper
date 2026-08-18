@@ -1,0 +1,29 @@
+# Credenciais (NUNCA vão para o GitHub)
+.env
+
+# Banco de dados SQLite
+*.sqlite3
+
+# Arquivos de saída (relatórios e execuções)
+sniper_resultados/
+dados_browser/
+relatorios_semanais/
+relatorios_pdf/
+relatorios/
+teste_resultados/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
