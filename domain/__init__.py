@@ -42,6 +42,16 @@ from domain.events import (
 )
 from domain.deltas import calcular_delta_fontes
 from domain.pricing import detectar_mudancas_preco
+from domain.scoring import (
+    medir_dimensoes,
+    score_ambiente_competitivo,
+    score_pressao_competitiva,
+    score_vulnerabilidade_empresa,
+    classificar_sinal,
+    acao_evento,
+    gerar_sinais_deterministicos,
+    score_momentum,
+)
 
 __all__ = [
     "Fonte",
@@ -77,4 +87,12 @@ __all__ = [
     "criar_eventos",
     "calcular_delta_fontes",
     "detectar_mudancas_preco",
+    "medir_dimensoes",
+    "score_ambiente_competitivo",
+    "score_pressao_competitiva",
+    "score_vulnerabilidade_empresa",
+    "classificar_sinal",
+    "acao_evento",
+    "gerar_sinais_deterministicos",
+    "score_momentum",
 ]

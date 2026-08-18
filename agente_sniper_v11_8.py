@@ -112,6 +112,16 @@ from domain.events import (
     eventos_sao_mesmo_fato,
     criar_eventos as _domain_criar_eventos,
 )
+from domain.scoring import (
+    medir_dimensoes as _domain_medir_dimensoes,
+    score_ambiente_competitivo as _domain_score_ambiente_competitivo,
+    score_pressao_competitiva as _domain_score_pressao_competitiva,
+    score_vulnerabilidade_empresa as _domain_score_vulnerabilidade_empresa,
+    classificar_sinal as _domain_classificar_sinal,
+    acao_evento as _domain_acao_evento,
+    gerar_sinais_deterministicos as _domain_gerar_sinais_deterministicos,
+    score_momentum as _domain_score_momentum,
+)
 from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
 
 # ---------- dependências opcionais ----------
@@ -1625,135 +1635,35 @@ def criar_eventos(fontes: List[Fonte]) -> List[Dict[str, Any]]:
 
 
 def medir_dimensoes(fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    out = {}
-    for kind, rule in EVENT_RULES.items():
-        evs = [e for e in events if e["kind"] == kind and e.get("current", False)]
-        uniq = len({i for e in evs for i in e["evidence_ids"]})
-        confirmed = sum(1 for e in evs if e.get("independent_source_count", 1) >= 2)
-        rec = sum(float(e["confidence"]) for e in evs[:8]) / max(1, len(evs)) if evs else 0
-        volume = min(1.0, uniq / 5.0)
-        score = rule["base"] * (0.42 + 0.30*volume + 0.18*rec + 0.10*min(1.0, confirmed/2)) if evs else 0
-        valid_ids = [x for e in evs for x in e["evidence_ids"] if 0 < x <= len(fontes)]
-        if valid_ids and all(not fontes[i-1].data_publicacao for i in valid_ids): score *= 0.72
-        out[kind] = {
-            "score": score_clamp(score),
-            "eventos": len(evs),
-            "evidencias": uniq,
-            "eventos_correlacionados": confirmed,
-            "confianca_media": round(rec, 2),
-        }
-    return out
+    return _domain_medir_dimensoes(fontes, events)
 
 
 def score_ambiente_competitivo(dimensoes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    # Ambiente = atividade da própria empresa, NÃO pressão externa.
-    pesos = {"PREÇO": .12, "EXPANSÃO": .16, "DIGITAL": .12, "MARKETING": .08, "PRODUTO/SERVIÇO": .10, "PARCERIA": .05, "REPUTAÇÃO": .14, "ATENDIMENTO": .08, "REGULAÇÃO": .08, "PESSOAS": .07}
-    total = sum(dimensoes.get(k, {}).get("score", 0) * w for k, w in pesos.items())
-    cobertura = sum(w for k,w in pesos.items() if dimensoes.get(k, {}).get("score",0) > 0)
-    penalty = 0.72 if cobertura < .40 else 0.86 if cobertura < .60 else 1.0
-    total *= penalty
-    return {"score": score_clamp(total), "label": "ALTA" if total >=70 else "MÉDIA" if total >=45 else "BAIXA", "cobertura": round(cobertura,2), "tipo":"atividade_da_empresa"}
+    return _domain_score_ambiente_competitivo(dimensoes)
 
 
 def score_pressao_competitiva(fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    externos = [e for e in events if e.get("current", False) and e.get("entity") not in {"", EMPRESA_ALVO}]
-    externos = [e for e in externos if e.get("entity") != "mercado" or e.get("importance", 0) >= 55]
-    if not externos:
-        return {"score": None, "label": "NÃO CALCULADO", "cobertura": 0.0, "motivo": "Sem eventos externos relevantes."}
-    by_entity: Dict[str,float] = {}
-    for e in externos:
-        ent = e.get("entity") or "mercado"
-        by_entity[ent] = by_entity.get(ent,0) + e["importance"] * max(.35,float(e.get("confidence",.5)))
-    # reduz pontuação de um único domínio dominante; diversidade importa.
-    ranked = sorted(by_entity.items(), key=lambda kv: kv[1], reverse=True)
-    leader = ranked[0][1]
-    diversity = min(1.0, len(ranked)/4)
-    corroboration = min(1.0, sum(1 for e in externos if e.get("independent_source_count",1)>=2)/max(1,len(externos)))
-    intensity = min(100, leader/2.8)
-    score = score_clamp(intensity*.58 + diversity*24 + corroboration*18)
-    return {"score": score, "label": "ALTA" if score>=70 else "MÉDIA" if score>=45 else "BAIXA", "cobertura": round(diversity,2), "corroboracao": round(corroboration,2), "entidades": [x[0] for x in ranked[:5]], "tipo":"pressao_externa"}
+    return _domain_score_pressao_competitiva(fontes, events, empresa_alvo=EMPRESA_ALVO)
 
 
 def score_vulnerabilidade_empresa(events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    riscos = [e for e in events if e.get("current", False) and e.get("entity") == EMPRESA_ALVO and e.get("kind") in RISK_KINDS]
-    if not riscos:
-        return {"score": 0, "label": "BAIXA", "cobertura": 0.0, "tipo": "vulnerabilidade_empresa"}
-    # Um evento isolado/antigo não pode criar artificialmente 70-100.
-    total = 0.0
-    recent = 0
-    corroborated = 0
-    kinds=set()
-    for e in riscos[:10]:
-        conf=float(e.get("confidence",0.5))
-        sources=int(e.get("independent_source_count",1))
-        dated=bool(e.get("date"))
-        factor=conf
-        if sources >= 2:
-            factor *= 1.0; corroborated += 1
-        else:
-            factor *= 0.50
-        if dated:
-            recent += 1
-        else:
-            factor *= 0.55
-        total += float(e.get("importance",0))*factor
-        kinds.add(e.get("kind"))
-    raw=min(100.0, total/2.4)
-    # Cobertura exige recorrência/corroboracão/dimensão; uma única denúncia fica limitada.
-    if len(riscos)==1 and corroborated==0:
-        raw=min(raw, 38.0)
-    elif len(riscos)<=2 and corroborated==0:
-        raw=min(raw, 52.0)
-    elif corroborated==0 and len(kinds)==1:
-        raw=min(raw, 62.0)
-    score=score_clamp(raw)
-    label="ALTA" if score>=70 else "MÉDIA" if score>=40 else "BAIXA"
-    return {
-        "score": score,
-        "label": label,
-        "eventos_de_risco": len(riscos),
-        "eventos_correlacionados": corroborated,
-        "dimensoes_de_risco": len(kinds),
-        "fontes_diferentes": sum(max(1,int(e.get("independent_source_count",1))) for e in riscos),
-        "cobertura": round(min(1.0, (len(riscos)+corroborated)/(4.0)),2),
-        "tipo":"vulnerabilidade_empresa",
-        "regra":"evento isolado sem corroboracao limitado a 38/100; score alto exige recorrencia e/ou fontes independentes."
-    }
+    return _domain_score_vulnerabilidade_empresa(events, empresa_alvo=EMPRESA_ALVO)
+
 
 def classificar_sinal(event: Dict[str, Any]) -> str:
-    if event["kind"] in RISK_KINDS: return "RISCO"
-    if event["kind"] in OPPORTUNITY_KINDS: return "OPORTUNIDADE"
-    return "MOVIMENTO"
+    return _domain_classificar_sinal(event)
 
 
 def acao_evento(kind: str) -> str:
-    return {"PREÇO":"Medir preço/promoção em itens sensíveis antes de alterar margem.","REPUTAÇÃO":"Quantificar recorrência e gravidade antes de tratar o tema como estrutural.","ATENDIMENTO":"Monitorar por unidade/canal e criar KPI operacional.","EXPANSÃO":"Mapear raio de impacto e comparar oferta/concorrência local.","DIGITAL":"Comparar jornada, aquisição e conveniência digital.","MARKETING":"Mapear mensagem, público e timing antes de reagir.","PESSOAS":"Separar expansão de reposição antes de inferir crescimento.","REGULAÇÃO":"Validar o ato diretamente em fonte oficial.","PRODUTO/SERVIÇO":"Comparar mix, lançamento e proposta de valor.","PARCERIA":"Avaliar impacto em distribuição, canal, tecnologia ou aquisição."}.get(kind,"Investigar o evento antes de agir.")
+    return _domain_acao_evento(kind)
 
 
 def gerar_sinais_deterministicos(fontes: List[Fonte], events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    fmap = fonte_por_id(fontes)
-    sinais=[]
-    for e in events[:18]:
-        ids=[x for x in e["evidence_ids"] if x in fmap]
-        if not ids: continue
-        independent=e.get("independent_source_count",1)
-        corroborado=independent>=2
-        impacto="ALTO" if e["importance"]>=75 and corroborado else "MEDIO" if e["importance"]>=55 else "BAIXO"
-        if e["kind"] in {"REPUTAÇÃO","ATENDIMENTO"} and not corroborado: impacto="BAIXO" if e["importance"]<65 else "MEDIO"
-        urg="ALTA" if e["importance"]>=78 and corroborado else "MEDIA" if e["importance"]>=55 else "BAIXA"
-        sinais.append({"titulo":e["title"],"tipo":classificar_sinal(e),"impacto":impacto,"urgencia":urg,"racional":f"Evento sustentado por {len(ids)} evidência(s) e {independent} fonte(s) independente(s). Isso é um sinal; não prova causalidade financeira.","acao":acao_evento(e["kind"]),"evidence_ids":ids,"confianca":e["confidence"],"limite":"corroborado" if corroborado else "sinal isolado","event_id":e["event_id"],"entidade":e.get("entity")})
-    return sinais[:12]
+    return _domain_gerar_sinais_deterministicos(fontes, events)
 
 
-def score_momentum(events: List[Dict[str, Any]], fontes: List["Fonte"]) -> int:
-    recent=[e for e in events if e.get("date") and e.get("current", False)]
-    if not recent: return 0
-    values=[]
-    fmap={f.id:f for f in fontes}
-    for e in recent[:15]:
-        f=fmap.get(e["evidence_ids"][0])
-        values.append(e["importance"]*recencia_score(f) if f else 0)
-    return score_clamp(sum(values)/max(1,len(values)))
+def score_momentum(events: List[Dict[str, Any]], fontes: List[Fonte]) -> int:
+    return _domain_score_momentum(events, fontes, hoje=HOJE)
 
 # ============================================================
 # 10. LLM ESTRUTURADO (OPCIONAL)
