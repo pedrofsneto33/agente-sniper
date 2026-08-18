@@ -76,6 +76,43 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+from domain.models import Fonte, PriceItem
+from domain.normalizer import (
+    normalizar,
+    remover_acentos,
+    termo,
+    truncar,
+    parse_data,
+    parse_money,
+    normalizar_quantidade,
+    nome_produto_normalizado,
+    tokens_produto,
+    score_clamp,
+)
+from domain.identity import (
+    sha1,
+    url_normalizada,
+    dominio,
+    data_na_url,
+    data_publicacao,
+    cidade_ok as _domain_cidade_ok,
+    estado_ok as _domain_estado_ok,
+    identidade_conflitante as _domain_identidade_conflitante,
+)
+from domain.matching import similaridade_produto
+from domain.events import (
+    EVENT_RULES,
+    RISK_KINDS,
+    OPPORTUNITY_KINDS,
+    recencia_score as _domain_recencia_score,
+    qualidade_fonte,
+    evento_titulo_estavel,
+    canonical_event_key,
+    _primary_event_kind as _domain_primary_event_kind,
+    eventos_sao_mesmo_fato,
+    criar_eventos as _domain_criar_eventos,
+)
+
 # ---------- dependências opcionais ----------
 try:
     from groq import Groq
@@ -466,37 +503,8 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
 PROFILE = NICHE_PROFILES.get(NICHO, NICHE_PROFILES["generico"])
 
 # ============================================================
-# 3. HELPERS
+# 3. HELPERS & ADAPTERS (DOMAIN BINDINGS)
 # ============================================================
-
-def normalizar(texto: Any) -> str:
-    if texto is None:
-        return ""
-    s = unicodedata.normalize("NFKD", str(texto))
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    s = s.lower()
-    s = re.sub(r"\s+", " ", s)
-    return s.strip()
-
-
-def remover_acentos(texto: Any) -> str:
-    s = normalizar(texto)
-    # Compatibilidade com Helvetica/Latin-1 usada pelo FPDF.
-    s = (s.replace("—", "-")
-           .replace("–", "-")
-           .replace("•", "-")
-           .replace("“", '"')
-           .replace("”", '"')
-           .replace("’", "'"))
-    return s.encode("latin-1", "ignore").decode("latin-1")
-
-
-def termo(texto: str, consulta: str) -> bool:
-    a, b = normalizar(texto), normalizar(consulta)
-    if not b:
-        return False
-    return re.search(r"(?<!\w)" + re.escape(b) + r"(?!\w)", a) is not None
-
 
 def alias_empresa(texto: str) -> Optional[str]:
     """Identidade conservadora; sobrenome isolado não é alias automático."""
@@ -510,108 +518,16 @@ def alias_empresa(texto: str) -> Optional[str]:
     return None
 
 
-def identidade_conflitante(texto: str) -> bool:
-    n = normalizar(texto)
-    if "carvalho" not in normalizar(EMPRESA_ALVO):
-        return False
-    return any(x in n for x in [
-        "loja de ferramentas", "m carvalho & cia", "m carvalho e cia",
-        "ferramentas", "material de construcao", "material de construção"
-    ])
+def identidade_conflitante(texto: str, empresa_alvo: str = EMPRESA_ALVO) -> bool:
+    return _domain_identidade_conflitante(texto, empresa_alvo)
 
 
-def cidade_ok(texto: str) -> bool:
-    return bool(CIDADE) and termo(texto, CIDADE)
+def cidade_ok(texto: str, cidade: str = CIDADE) -> bool:
+    return _domain_cidade_ok(texto, cidade)
 
 
-def estado_ok(texto: str) -> bool:
-    n = normalizar(texto)
-    estado = normalizar(ESTADO)
-    if not estado:
-        return False
-    if len(estado) <= 2:
-        return bool(re.search(r"(?<!\w)" + re.escape(estado) + r"(?!\w)", n))
-    return termo(n, estado)
-
-
-def url_normalizada(url: str) -> str:
-    if not url:
-        return ""
-    try:
-        p = urlparse(url.strip())
-        scheme = (p.scheme or "https").lower()
-        host = p.netloc.lower().replace("www.", "")
-        path = re.sub(r"/{2,}", "/", p.path or "/").rstrip("/") or "/"
-        keep = []
-        for q in (p.query or "").split("&"):
-            if not q:
-                continue
-            k = q.split("=", 1)[0].lower()
-            if k.startswith("utm_") or k in {"gclid", "fbclid", "msclkid"}:
-                continue
-            keep.append(q)
-        return urlunparse((scheme, host, path, "", "&".join(keep), ""))
-    except Exception:
-        return url.strip()
-
-
-def dominio(url: str) -> str:
-    try:
-        return urlparse(url).netloc.lower().replace("www.", "")
-    except Exception:
-        return ""
-
-
-def truncar(texto: str, n: int) -> str:
-    s = re.sub(r"\s+", " ", str(texto or "")).strip()
-    if len(s) <= n:
-        return s
-    return s[: max(20, n - 3)].rsplit(" ", 1)[0] + "..."
-
-
-def sha1(texto: str) -> str:
-    return hashlib.sha1(str(texto or "").encode("utf-8", errors="ignore")).hexdigest()
-
-
-def parse_data(valor: Any) -> Optional[datetime]:
-    if not valor:
-        return None
-    s = str(valor).strip()
-    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z", "%d/%m/%Y", "%Y/%m/%d"):
-        try:
-            return datetime.strptime(s[:30], fmt)
-        except Exception:
-            pass
-    if date_parser:
-        try:
-            return date_parser.parse(s, fuzzy=False)
-        except Exception:
-            pass
-    return None
-
-
-def data_na_url(url: str) -> Optional[datetime]:
-    for pattern in (
-        r"/(20\d{2})/(0[1-9]|1[0-2])/([0-3]\d)(?:/|$)",
-        r"/(20\d{2})-(0[1-9]|1[0-2])-([0-3]\d)(?:/|$)",
-    ):
-        m = re.search(pattern, url or "")
-        if m:
-            try:
-                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            except ValueError:
-                pass
-    return None
-
-
-def data_publicacao(raw: Dict[str, Any]) -> Tuple[str, str, Optional[datetime]]:
-    d = parse_data(raw.get("data_publicacao", ""))
-    if d:
-        return d.strftime("%Y-%m-%d"), "publicada", d
-    d = data_na_url(raw.get("url", ""))
-    if d:
-        return d.strftime("%Y-%m-%d"), "url", d
-    return "", "desconhecida", None
+def estado_ok(texto: str, estado: str = ESTADO) -> bool:
+    return _domain_estado_ok(texto, estado)
 
 
 def json_seguro(texto: str) -> Optional[Dict[str, Any]]:
@@ -629,63 +545,8 @@ def json_seguro(texto: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def score_clamp(x: float) -> int:
-    return max(0, min(100, int(round(x))))
-
-# ============================================================
-# 4. DATACLASS
-# ============================================================
-
-@dataclass
-class Fonte:
-    id: int
-    titulo: str
-    url: str
-    origem: str
-    categoria: str = "geral"
-    conteudo: str = ""
-    resumo_busca: str = ""
-    data_publicacao: str = ""
-    data_tipo: str = "desconhecida"
-    atual: bool = False
-    direta: bool = False
-    score: float = 0.0
-    confianca: float = 0.0
-    alias_empresa: str = ""
-    cidade_confirmada: bool = False
-    estado_confirmado: bool = False
-    escopo: str = "global"  # local | nacional | corporativo | global | incerto
-    fingerprint: str = ""
-    dominio: str = ""
-    sinais: List[str] = field(default_factory=list)
-    entidade: str = ""  # empresa monitorada | concorrente | mercado
-
-    def texto(self) -> str:
-        return f"{self.titulo}\n{self.url}\n{self.resumo_busca}\n{self.conteudo}"
-
-@dataclass
-class PriceItem:
-    source: str
-    role: str
-    name: str
-    url: str
-    price: Optional[float] = None
-    old_price: Optional[float] = None
-    promotion: bool = False
-    brand: str = ""
-    unit: str = ""
-    sku: str = ""
-    matched_name: str = ""
-    competitor: str = ""
-    similarity: float = 0.0
-    availability: str = "unknown"
-    location_note: str = ""
-    evidence_url: str = ""
-
-    def key(self) -> str:
-        return normalizar(f"{self.brand} {self.name} {self.unit} {self.sku}")
-
 def source_domain_root(url: str) -> str:
+    return dominio(url)
     return dominio(url)
 
 def _fetch_html_http(url: str) -> Tuple[str, str]:
@@ -1339,69 +1200,6 @@ def enriquecer(fontes: List[Fonte]) -> List[Fonte]:
 MONEY_RE = re.compile(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:\.[0-9]{2}))", re.I)
 
 
-def parse_money(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    s = str(value).strip()
-    if not s:
-        return None
-    s = s.replace("R$", "").replace(" ", "")
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        v = float(re.sub(r"[^0-9.\-]", "", s))
-        return round(v, 2) if v >= 0 else None
-    except Exception:
-        return None
-
-
-def normalizar_quantidade(unidade: str) -> Tuple[Optional[float], Optional[str]]:
-    n = normalizar(unidade).replace(",", ".")
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(kg|g|mg|l|ml|un|und|unidade|unidades|m2|m²)", n)
-    if not m:
-        return None, None
-    val = float(m.group(1))
-    unit = m.group(2)
-    if unit == "kg": return val * 1000, "g"
-    if unit == "mg": return val / 1000, "g"
-    if unit == "l": return val * 1000, "ml"
-    if unit in {"un","und","unidade","unidades"}: return val, "un"
-    if unit in {"m2","m²"}: return val, "m2"
-    return val, unit
-
-
-def nome_produto_normalizado(name: str) -> str:
-    n = normalizar(name)
-    n = re.sub(r"\b\d+(?:[\.,]\d+)?\s*(kg|g|mg|l|ml|un|und|unidade|unidades|m2|m²)\b", " ", n)
-    n = re.sub(r"[^a-z0-9]+", " ", n)
-    return re.sub(r"\s+", " ", n).strip()
-
-
-def tokens_produto(name: str) -> set:
-    stop={"de","da","do","e","com","sem","para","em","tipo","kit"}
-    return {x for x in nome_produto_normalizado(name).split() if len(x)>2 and x not in stop}
-
-
-def similaridade_produto(a: PriceItem, b: PriceItem) -> float:
-    ta,tb=tokens_produto(a.name),tokens_produto(b.name)
-    seq=difflib.SequenceMatcher(None,nome_produto_normalizado(a.name),nome_produto_normalizado(b.name)).ratio()
-    overlap=len(ta & tb)/max(1,len(ta | tb)) if ta and tb else seq
-    score=0.64*overlap+0.24*seq
-    if a.brand and b.brand and normalizar(a.brand)==normalizar(b.brand):
-        score+=0.14
-    qa,ua=normalizar_quantidade(a.unit)
-    qb,ub=normalizar_quantidade(b.unit)
-    if qa is not None and qb is not None and ua==ub:
-        score += 0.18 if abs(qa-qb)<1e-6 else -0.18
-    elif a.unit and b.unit:
-        score-=0.08
-    if a.sku and b.sku and normalizar(a.sku)==normalizar(b.sku):
-        score+=0.35
-    return max(0.0,min(1.0,score))
-
-
 def _walk_json(obj: Any, limit: int = 10000) -> Iterable[Dict[str, Any]]:
     stack = [obj]
     seen = 0
@@ -1878,169 +1676,27 @@ class MemoriaSniper:
 # 9. MOTOR DE EVENTOS, SINAIS E SCORES
 # ============================================================
 
-EVENT_RULES: Dict[str, Dict[str, Any]] = {
-    "PREÇO": {"keys": ["preco", "oferta", "promocao", "desconto", "r$"], "base": 60},
-    "REPUTAÇÃO": {"keys": ["reclamacao", "reclame", "avaliacao", "nota", "queixa"], "base": 62},
-    "ATENDIMENTO": {"keys": ["atendimento", "fila", "demora", "suporte"], "base": 54},
-    "EXPANSÃO": {"keys": ["inaugur", "nova unidade", "nova loja", "expansao", "filial"], "base": 74},
-    "DIGITAL": {"keys": ["app", "aplicativo", "delivery", "ecommerce", "e-commerce", "plataforma"], "base": 62},
-    "MARKETING": {"keys": ["campanha", "evento", "patrocin", "publicidade", "marketing"], "base": 48},
-    "PESSOAS": {"keys": ["vaga", "contratacao", "emprego", "recrut"], "base": 44},
-    "REGULAÇÃO": {"keys": ["procon", "multa", "fiscalizacao", "anvisa", "sanitaria", "processo"], "base": 78},
-    "PRODUTO/SERVIÇO": {"keys": ["lancamento", "produto", "servico", "cardapio", "catalogo"], "base": 52},
-    "PARCERIA": {"keys": ["parceria", "acordo", "joint venture", "fornecedor"], "base": 50},
-}
-
-RISK_KINDS = {"REPUTAÇÃO", "ATENDIMENTO", "REGULAÇÃO"}
-OPPORTUNITY_KINDS = {"PREÇO", "EXPANSÃO", "DIGITAL", "MARKETING", "PRODUTO/SERVIÇO", "PARCERIA"}
+def recencia_score(f: Fonte, hoje: Optional[datetime] = None) -> float:
+    return _domain_recencia_score(f, hoje or HOJE)
 
 
-def recencia_score(f: Fonte) -> float:
-    if not f.data_publicacao:
-        return 0.35
-    d = parse_data(f.data_publicacao)
-    if not d:
-        return 0.35
-    delta = max(0, (HOJE.date() - d.date()).days)
-    if delta <= 7: return 1.00
-    if delta <= 30: return 0.88
-    if delta <= 90: return 0.72
-    if delta <= 180: return 0.52
-    return 0.30
+def _primary_event_kind(f: Fonte) -> Tuple[Optional[str], List[str]]:
+    return _domain_primary_event_kind(
+        f,
+        is_price_candidate_fn=lambda u, t, c: _price_page_type(u, t, c) in {"COMMERCIAL_CANDIDATE", "ROOT_CANDIDATE"}
+    )
 
 
-def qualidade_fonte(f: Fonte) -> float:
-    base = 0.30
-    if f.alias_empresa or f.entidade: base += 0.15
-    if f.cidade_confirmada: base += 0.15
-    elif f.estado_confirmado: base += 0.06
-    if f.direta: base += 0.10
-    if f.data_publicacao: base += 0.10
-    if f.dominio in {"gov.br", "mppi.mp.br", "reclameaqui.com.br", "g1.globo.com"}: base += 0.10
-    if f.escopo == "local": base += 0.08
-    return min(1.0, base)
-
-
-def evento_titulo_estavel(f: Fonte, kind: str) -> str:
-    base=re.sub(r"\s+"," ",f.titulo or "").strip()
-    generic={"instagram","facebook","youtube","google notícias","google noticias","reclame aqui","home","página inicial","pagina inicial"}
-    if normalizar(base) in generic or len(base) < 12:
-        base=re.sub(r"\s+"," ",(f.resumo_busca or f.conteudo[:260])).strip()
-    # Remove boilerplate de domínio quando o título é claramente um resultado de busca.
-    base=re.sub(r"\s+[|•-]\s+(Instagram|Facebook|YouTube|Google Notícias|Google Noticias)$","",base,flags=re.I).strip()
-    return truncar(base,180)
-
-
-def _evento_tokens(s: str) -> set:
-    stop={"de","da","do","e","em","para","com","que","um","uma","na","no","por","a","o","os","as","dos","das","ao","aos","sua","seu","sobre"}
-    return {x for x in re.findall(r"[a-z0-9]{3,}",normalizar(s)) if x not in stop}
-
-
-def _evento_data(obj: Any) -> Optional[datetime]:
-    raw=obj.get("date") if isinstance(obj,dict) else getattr(obj,"data_publicacao","")
-    return parse_data(raw) if raw else None
-
-
-def _same_event_date(a: Dict[str,Any], b: Dict[str,Any]) -> bool:
-    da,db=_evento_data(a),_evento_data(b)
-    if da and db:
-        return abs((da.date()-db.date()).days)<=EVENT_DATE_CLUSTER_DAYS
-    return not (a.get("date") or b.get("date"))
-
-
-def _event_similarity(a_title: str,b_title: str) -> Tuple[float,float]:
-    na,nb=normalizar(a_title),normalizar(b_title)
-    seq=difflib.SequenceMatcher(None,na,nb).ratio()
-    ta,tb=_evento_tokens(na),_evento_tokens(nb)
-    tok=len(ta & tb)/max(1,len(ta | tb))
-    return seq,tok
-
-
-def eventos_sao_mesmo_fato(a: Dict[str,Any],b: Dict[str,Any]) -> bool:
-    if normalizar(a.get("entity"))!=normalizar(b.get("entity")) or a.get("kind")!=b.get("kind"):
-        return False
-    if not _same_event_date(a,b): return False
-    seq,tok=_event_similarity(a.get("title",""),b.get("title",""))
-    if seq<EVENT_TITLE_SIM_THRESHOLD and tok<EVENT_TOKEN_SIM_THRESHOLD: return False
-    if a.get("kind")=="REGULAÇÃO":
-        keys={"procon","multa","fiscalizacao","anvisa","sanitaria","processo"}
-        if not ((_evento_tokens(a.get("title","")) & keys) and (_evento_tokens(b.get("title","")) & keys)):
-            return False
-    return True
-
-
-def canonical_event_key(f: Fonte, kind: str) -> str:
-    title=evento_titulo_estavel(f,kind)
-    toks=sorted(_evento_tokens(title))
-    nums=re.findall(r"\b\d+(?:[.,]\d+)?\b",normalizar(title))
-    d=f.data_publicacao[:10] if f.data_publicacao else "sem-data"
-    dt=parse_data(d)
-    bucket=(dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d") if dt else "sem-data"
-    return sha1(f"{normalizar(f.entidade or f.alias_empresa or 'mercado')}|{kind}|{'local' if f.cidade_confirmada else f.escopo}|{' '.join(toks[:24])}|{','.join(nums[:4])}|{bucket}")[:24]
-
-
-def _primary_event_kind(f: Fonte) -> Tuple[Optional[str],List[str]]:
-    n=normalizar(f.texto())
-    if any(k in n for k in ["procon","multa","fiscalizacao","anvisa","vigilancia sanitaria"]):
-        return "REGULAÇÃO",["REGULAÇÃO"]
-    if any(k in n for k in ["vaga","vagas","emprego","contratacao","contratação","recrutamento","processo seletivo"]):
-        return "PESSOAS",["PESSOAS"] + (["EXPANSÃO"] if any(k in n for k in ["nova unidade","nova loja","inaugur","filial"]) else [])
-    if any(k in n for k in ["inaugur","nova unidade","nova loja","expansao","expansão","filial","abre as portas","instalação de","instalacao de","vai abrir","planeja abrir"]):
-        return "EXPANSÃO",["EXPANSÃO"]
-    if any(k in n for k in ["reclamacao","reclamação","reclame aqui","queixa","avaliacao","avaliação","nota"]):
-        return "REPUTAÇÃO",["REPUTAÇÃO"]
-    if any(k in n for k in ["fila","demora no atendimento","mau atendimento","suporte"]):
-        return "ATENDIMENTO",["ATENDIMENTO"]
-    if any(k in n for k in ["preco","preço","oferta","promocao","promoção","desconto"]) and _price_page_type(f.url,f.titulo,f.conteudo) in {"COMMERCIAL_CANDIDATE","ROOT_CANDIDATE"}:
-        return "PREÇO",["PREÇO"]
-    if any(k in n for k in ["app","aplicativo","delivery","e-commerce","ecommerce","plataforma","supershop"]):
-        return "DIGITAL",["DIGITAL"]
-    if any(k in n for k in ["campanha","publicidade","patrocin","marketing","evento promocional"]):
-        return "MARKETING",["MARKETING"]
-    if any(k in n for k in ["lancamento","lançamento","produto novo","novo produto","cardapio","catalogo","catálogo","servico","serviço"]):
-        return "PRODUTO/SERVIÇO",["PRODUTO/SERVIÇO"]
-    if any(k in n for k in ["parceria","acordo","joint venture","fornecedor"]):
-        return "PARCERIA",["PARCERIA"]
-    return None,[]
-
-
-def criar_eventos(fontes: List[Fonte]) -> List[Dict[str,Any]]:
-    candidates=[]
-    for f in fontes:
-        kind,dims=_primary_event_kind(f)
-        if not kind: continue
-        d=_evento_data(f)
-        current=bool(d and (HOJE.date()-d.date()).days<=EVENT_CURRENT_WINDOW_DAYS)
-        contextual=bool(d and (HOJE.date()-d.date()).days<=EVENT_CONTEXTUAL_MAX_DAYS)
-        eq=qualidade_fonte(f); rec=recencia_score(f)
-        specificity=1.0 if f.escopo in {"local","concorrente"} else 0.82 if f.escopo=="corporativo" else 0.60
-        importance=score_clamp(EVENT_RULES[kind]["base"]*(0.55+0.25*eq+0.15*rec+0.05*specificity))
-        if not d: importance=score_clamp(importance*0.68)
-        if not current: importance=min(importance,54)
-        ev={"event_id":canonical_event_key(f,kind),"event_key":canonical_event_key(f,kind),"kind":kind,"title":evento_titulo_estavel(f,kind),"importance":importance,
-            "confidence":round(min(1.0,0.45*eq+0.35*rec+0.20*specificity),2),"evidence_ids":[f.id],"date":f.data_publicacao or "",
-            "scope":f.escopo,"entity":f.entidade or f.alias_empresa or "mercado","dimensions":dims,
-            "independent_sources":{f.dominio or f.url},"source_urls":[f.url],"direct":bool(f.direta),"current":current,"contextual":contextual}
-        for ex in candidates:
-            if eventos_sao_mesmo_fato(ex,ev):
-                ex["evidence_ids"]=sorted(set(ex["evidence_ids"]+[f.id]))
-                ex["independent_sources"].add(f.dominio or f.url)
-                ex["source_urls"]=sorted(set(ex["source_urls"]+[f.url]))[:12]
-                ex["dimensions"]=sorted(set(ex["dimensions"]+dims))
-                ex["current"]=ex["current"] or current; ex["contextual"]=ex["contextual"] or contextual
-                ex["direct"]=ex["direct"] or bool(f.direta)
-                ex["importance"]=score_clamp(max(ex["importance"],importance)+min(8,2*len(ex["independent_sources"])))
-                ex["confidence"]=round(min(1.0,max(ex["confidence"],ev["confidence"])+(0.05 if len(ex["independent_sources"])>=2 else 0)),2)
-                if len(ev["title"])>len(ex["title"]): ex["title"]=ev["title"]
-                break
-        else:
-            candidates.append(ev)
-    out=[]
-    for e in candidates:
-        e["independent_source_count"]=len(e.pop("independent_sources"))
-        if e["independent_source_count"]>=2: e["confidence"]=round(min(1.0,e["confidence"]+0.10),2)
-        out.append(e)
-    return sorted(out,key=lambda x:(bool(x.get("current")),x["importance"],x["confidence"]),reverse=True)[:60]
+def criar_eventos(fontes: List[Fonte]) -> List[Dict[str, Any]]:
+    return _domain_criar_eventos(
+        fontes,
+        hoje=HOJE,
+        current_window_days=EVENT_CURRENT_WINDOW_DAYS,
+        contextual_max_days=EVENT_CONTEXTUAL_MAX_DAYS,
+        is_price_candidate_fn=lambda u, t, c: _price_page_type(u, t, c) in {"COMMERCIAL_CANDIDATE", "ROOT_CANDIDATE"},
+        title_sim_threshold=EVENT_TITLE_SIM_THRESHOLD,
+        token_sim_threshold=EVENT_TOKEN_SIM_THRESHOLD,
+    )
 
 
 def medir_dimensoes(fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
