@@ -56,7 +56,7 @@ class EntityResolver(ABC):
             h_doc = 3000.0
 
         dist_max_px = 0.10 * w_doc
-        dy_ancoras_max_px = 0.06 * h_doc
+        dy_ancoras_max_px = 0.08 * h_doc
 
         subordinadas_indices = set()
         for i, ent_a in enumerate(entidades):

@@ -62,7 +62,29 @@ class FlyerProductResolver(EntityResolver):
 
         tokens = region.tokens_incluidos
         if not tokens:
-            return None
+            # Âncora isolada sem tokens de contexto: preserva a entidade sem fabricar nome artificial
+            return ExtractedEntity(
+                entidade="produto",
+                origem_tipo="ancora_isolada",
+                atributos={
+                    "nome": ancora.texto_bruto,
+                    "peso_volume": None,
+                    "condicao_comercial": None,
+                    "textos_detectados": [],
+                    "regiao_card": region.bbox_delimitada.to_dict() if region.bbox_delimitada else None
+                },
+                valor=ancora.valor_normalizado,
+                unidade=ancora.unidade or "BRL",
+                ancoras=[ancora],
+                confianca=ancora.confianca,
+                evidencias=[EvidenceItem(
+                    tipo="preco_anuncio",
+                    texto_bruto=ancora.texto_bruto,
+                    confianca=ancora.confianca,
+                    bbox=ancora.bbox,
+                    token_id=ancora.token_ref.id_token
+                )]
+            )
 
         # 1. Coleta e categorização de textos
         textos_filtrados: List[str] = []
@@ -110,9 +132,6 @@ class FlyerProductResolver(EntityResolver):
                 token_id=t.id_token
             ))
 
-        if not textos_filtrados:
-            return None
-
         # 2. Heurística determinística de nome de produto:
         # Ordena por proximidade vertical em relação à âncora de preço
         if ancora.bbox:
@@ -136,7 +155,7 @@ class FlyerProductResolver(EntityResolver):
 
         linhas_candidatas = [t.texto.strip() for t in tokens_proximos if len(t.texto.strip()) >= 5]
         nome_candidato = " ".join(linhas_candidatas[:2]) if linhas_candidatas else " ".join(textos_filtrados[:2])
-        nome_limpo = normalizar_espacos(nome_candidato)
+        nome_limpo = normalizar_espacos(nome_candidato) if (linhas_candidatas or textos_filtrados) else ancora.texto_bruto
 
         # 3. Identificação de marca e peso/volume
         peso_volume = medidas_encontradas[-1] if medidas_encontradas else None

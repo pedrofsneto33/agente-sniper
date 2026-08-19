@@ -567,6 +567,130 @@ class TestGeneralization(unittest.TestCase):
         self.assertTrue(identidade_conflitante("Clinica Veterinaria Santa Clara 24h", termos_conflitantes=termos_hospital))
         self.assertFalse(identidade_conflitante("Hospital Santa Clara Pronto Socorro", termos_conflitantes=termos_hospital))
 
+    def test_21_isolated_anchor_preservation(self):
+        """Testa que âncoras monetárias isoladas não são descartadas e preservam o texto da âncora sem fabricar nomes."""
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument
+        from extractors.candidates import StrictCurrencyRule, CandidateDetector
+        from extractors.clustering import clusterizar_espacialmente
+        from extractors.adapters.flyer_product_adapter import FlyerProductResolver
+
+        dim = (1000.0, 1000.0)
+
+        # 1. Âncora isolada válida EXPLICIT_CURRENCY gera região e entidade
+        doc_isolado = RawSpatialDocument("doc_iso", "banner", dim, [
+            SpatialToken("R$ 99,00", BoundingBox(100.0, 100.0, 300.0, 150.0), id_token=1)
+        ])
+        det = CandidateDetector([StrictCurrencyRule()])
+        ancoras_iso = det.detect_anchors(doc_isolado)
+        self.assertEqual(len(ancoras_iso), 1)
+
+        regioes_iso = clusterizar_espacialmente(doc_isolado, ancoras_iso)
+        self.assertEqual(len(regioes_iso), 1, "Âncora isolada não pode ser descartada pelo clustering")
+
+        resolver = FlyerProductResolver()
+        ent_iso = resolver.resolve_region(regioes_iso[0])
+        self.assertIsNotNone(ent_iso)
+        self.assertEqual(ent_iso.valor, 99.00)
+        self.assertEqual(ent_iso.atributos.get("nome"), "R$ 99,00", "Preserva o texto da âncora como contexto sem fabricar produto inexistente")
+
+        # 2. Documento sem âncoras válidas continua sem regiões
+        doc_sem_ancora = RawSpatialDocument("doc_vazio", "banner", dim, [
+            SpatialToken("APENAS TEXTO SEM PRECO", BoundingBox(100.0, 100.0, 400.0, 150.0), id_token=1)
+        ])
+        ancoras_vazio = det.detect_anchors(doc_sem_ancora)
+        self.assertEqual(len(ancoras_vazio), 0)
+        regioes_vazio = clusterizar_espacialmente(doc_sem_ancora, ancoras_vazio)
+        self.assertEqual(len(regioes_vazio), 0)
+
+        # 3. Âncora com contexto textual continua extraindo nome adequadamente
+        doc_com_contexto = RawSpatialDocument("doc_ctx", "flyer", dim, [
+            SpatialToken("ARROZ TIO JOAO 5KG", BoundingBox(100.0, 100.0, 400.0, 130.0), id_token=1),
+            SpatialToken("R$ 29,90", BoundingBox(100.0, 140.0, 250.0, 170.0), id_token=2),
+        ])
+        ancoras_ctx = det.detect_anchors(doc_com_contexto)
+        regioes_ctx = clusterizar_espacialmente(doc_com_contexto, ancoras_ctx)
+        self.assertEqual(len(regioes_ctx), 1)
+        ent_ctx = resolver.resolve_region(regioes_ctx[0])
+        self.assertIsNotNone(ent_ctx)
+        self.assertEqual(ent_ctx.valor, 29.90)
+        self.assertIn("ARROZ TIO JOAO", ent_ctx.atributos.get("nome"))
+
+    def test_22_canary_generic_only_adversarial_suite(self):
+        """Testes adversariais obrigatórios (Testes 1 a 8) da política estrita do Canary."""
+        from pathlib import Path
+        from unittest.mock import patch
+        from domain.models import PriceItem
+        from extractors.canary import comparar_documento_canary, CanaryDocumentReport
+        from extractors.promotion_gate import PromotionGate
+
+        # TESTE 1 — FANTASMA PLAUSÍVEL
+        item_fantasma_plausivel = PriceItem(
+            source="Assai", role="competitor", name="PRODUTO ABC", price=999.00, url="", price_confidence=0.95
+        )
+        rep1 = comparar_documento_canary(itens_legacy=[], itens_generic=[item_fantasma_plausivel])
+        self.assertEqual(rep1.fp_generic, 1, "Generic-only fantasma plausível deve ser estritamente FP_GENERIC")
+        self.assertEqual(rep1.fn_legacy, 0, "Generic-only não pode incrementar FN_LEGACY sem evidência independente")
+
+        # TESTE 2 — FANTASMA SEMÂNTICO
+        item_fantasma_semantico = PriceItem(
+            source="Assai", role="competitor", name="ARROZ PREMIUM", price=20.79, url="", price_confidence=0.99
+        )
+        rep2 = comparar_documento_canary(itens_legacy=[], itens_generic=[item_fantasma_semantico])
+        self.assertEqual(rep2.fp_generic, 1, "Generic-only com nome de produto semântico deve ser FP_GENERIC")
+        self.assertEqual(rep2.fn_legacy, 0)
+
+        # TESTE 3 — CONFIANÇA NÃO PODE TRANSFORMAR CLASSIFICAÇÃO
+        for conf in [0.40, 0.60, 0.90, 0.99]:
+            item_conf = PriceItem(
+                source="Assai", role="competitor", name="PRODUTO FANTASMA", price=100.0, url="", price_confidence=conf
+            )
+            rep3 = comparar_documento_canary(itens_legacy=[], itens_generic=[item_conf])
+            self.assertEqual(rep3.fp_generic, 1, f"Confiança {conf} não pode converter FP_GENERIC em FN_LEGACY")
+            self.assertEqual(rep3.fn_legacy, 0)
+
+        # TESTE 4 — NOME SEMÂNTICO MULTI-NICHO NÃO É PROVA
+        nomes_multi_nicho = ["ARROZ PREMIUM", "TELEVISOR 50", "PLANO PREMIUM", "ACADEMIA GOLD"]
+        for nome_nicho in nomes_multi_nicho:
+            item_nicho = PriceItem(
+                source="Competitor", role="competitor", name=nome_nicho, price=49.90, url="", price_confidence=0.95
+            )
+            rep4 = comparar_documento_canary(itens_legacy=[], itens_generic=[item_nicho])
+            self.assertEqual(rep4.fp_generic, 1, f"Nome multi-nicho '{nome_nicho}' sem baseline deve ser FP_GENERIC")
+            self.assertEqual(rep4.fn_legacy, 0)
+
+        # TESTE 5 — MATCH
+        l_item = PriceItem(source="Assai", role="competitor", name="ARROZ TIO JOAO 5KG", price=29.90, url="", unit="5kg")
+        g_item = PriceItem(source="Assai", role="competitor", name="ARROZ TIO JOAO 5KG", price=29.90, url="", unit="5kg")
+        rep5 = comparar_documento_canary(itens_legacy=[l_item], itens_generic=[g_item])
+        self.assertEqual(rep5.matches_exatos, 1)
+        self.assertEqual(rep5.fp_generic, 0)
+        self.assertEqual(rep5.fn_legacy, 0)
+
+        # TESTE 6 — LEGACY-ONLY (FN_GENERIC)
+        l_only = PriceItem(source="Assai", role="competitor", name="LEITE INTEGRAL 1L", price=4.99, url="", unit="1l")
+        rep6 = comparar_documento_canary(itens_legacy=[l_only], itens_generic=[])
+        self.assertEqual(rep6.fn_generic, 1, "Item existente apenas no Legacy deve ser FN_GENERIC")
+        self.assertEqual(rep6.fp_generic, 0)
+        self.assertEqual(rep6.fn_legacy, 0)
+
+        # TESTE 7 — PROMOTION GATE DETECTA FP_GENERIC (G2_fp_generic FAIL)
+        gate = PromotionGate(min_documents_threshold=1)
+        with patch("extractors.promotion_gate.comparar_documento_canary") as mock_canary:
+            mock_rep = CanaryDocumentReport(documento_id="doc_fp", total_legacy=0, total_generic=1, fp_generic=1)
+            mock_canary.return_value = mock_rep
+            ocr_files = sorted(list(Path(r"dados_browser/ocr_bruto").glob("*.json")))
+            res_gate = gate.evaluate(ocr_files[:1])
+            self.assertEqual(res_gate.decision, "FAIL")
+            self.assertEqual(res_gate.gates["G2_fp_generic"]["status"], "FAIL")
+            self.assertGreater(res_gate.fp_generic, 0)
+
+        # TESTE 8 — AUSÊNCIA DE HARDCODE DE PREÇOS NO CANARY
+        import inspect
+        import extractors.canary as canary_mod
+        canary_source = inspect.getsource(canary_mod)
+        for preco_hardcode in ["162.49", "156.80", "162.40"]:
+            self.assertNotIn(preco_hardcode, canary_source, f"Preço hardcoded {preco_hardcode} encontrado no módulo canary")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -137,7 +137,8 @@ def clusterizar_espacialmente(
         )
         r.calcular_bbox_envolvente()
 
-        if len(r.tokens_incluidos) >= 1:
+        # Preserva a região se contiver uma âncora válida ou tokens de texto atribuídos
+        if r.ancora is not None or len(r.tokens_incluidos) >= 1:
             r.scores["densidade_tokens"] = len(r.tokens_incluidos)
             regioes_validas.append(r)
 

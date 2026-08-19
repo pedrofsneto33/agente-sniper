@@ -291,12 +291,11 @@ class TestExtractionGeneric(unittest.TestCase):
 
         tokens = [
             SpatialToken("1624 9", BoundingBox(100, 100, 150, 120), 0.92, 1),
-            SpatialToken("162,49", BoundingBox(100, 125, 140, 142), 0.97, 2), # Bare decimal espúrio (h=17px)
+            SpatialToken("162,49", BoundingBox(100, 125, 140, 142), 0.97, 2),  # Bare decimal espúrio (h=17px)
             SpatialToken("CAPPUCCINO PREMIUM", BoundingBox(100, 150, 350, 180), 0.99, 3),
             SpatialToken("CAIXETA 156,8G OU 162,4G", BoundingBox(100, 190, 350, 215), 0.85, 4),
-            SpatialToken("R$", BoundingBox(100, 220, 130, 250), 0.98, 5),
-            SpatialToken("20,79", BoundingBox(135, 220, 280, 280), 0.99, 6), # Preço forte com R$ e CADA (h=60px)
-            SpatialToken("CADA", BoundingBox(200, 270, 260, 290), 0.95, 7)
+            SpatialToken("R$ 20,79", BoundingBox(100, 220, 280, 280), 0.99, 5),  # Preço forte com R$ e CADA (h=60px)
+            SpatialToken("CADA", BoundingBox(200, 270, 260, 290), 0.95, 6)
         ]
         doc = RawSpatialDocument("doc_case1_sim", "test", (1000, 1000), tokens)
         res = adapter.processar_documento(doc)

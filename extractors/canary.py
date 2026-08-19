@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Canary Controlado e Observabilidade — Fase 6C
 Compara determinística e semanticamente os resultados de LEGACY vs GENERIC item a item.
@@ -109,6 +109,13 @@ def calcular_similaridade_tokens(nome_a: str, nome_b: str) -> float:
     return inter / union if union > 0 else 0.0
 
 
+_RE_DISCLAIMER_CANARY = re.compile(
+    r'\b(pre[cç]os?\s+v[aá]lidos?|imagens?\s+(?:meramente\s+)?ilustrativas?|ofertas?\s+v[aá]lidas?|enquanto\s+durarem|condi[cç][oõ]es?\s+gerais|v[aá]lido\s+(?:de\s+\d+|para\s+todas))\b',
+    re.IGNORECASE
+)
+_RE_PALAVRA_SEMANTICA = re.compile(r'[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]{3,}')
+
+
 def comparar_documento_canary(
     itens_legacy: Sequence[PriceItem],
     itens_generic: Sequence[PriceItem],
@@ -202,14 +209,20 @@ def comparar_documento_canary(
     # 3. PASSO 3: Itens Restantes do LEGACY
     for l_item in legacy_pool:
         nome_lower = l_item.name.lower()
-        if (l_item.price in [162.49, 156.80, 162.40]) or re.search(r'\b\d+([.,]\d+)?\s*(g|kg|ml|l|sach[eê]s?)\b', nome_lower):
+        has_noise_chars = bool(re.search(r'[\[\]|{}]', l_item.name))
+        is_disclaimer = bool(_RE_DISCLAIMER_CANARY.search(nome_lower))
+        is_gramatura_pattern = bool(re.search(r'\b\d+([.,]\d+)?\s*(g|kg|ml|l|sach[eê]s?)\b', nome_lower))
+        not_semantic = not bool(_RE_PALAVRA_SEMANTICA.search(nome_lower))
+
+        if is_disclaimer or has_noise_chars or not_semantic:
             doc_rep.fp_legacy += 1
             classif = "FP_LEGACY"
-            motivo = f"Falso positivo Legacy: gramatura/código '{l_item.price}' confundido com preço"
-        elif "preços válidos" in nome_lower or "imagens meramente" in nome_lower:
+            motivo = "Falso positivo Legacy: disclaimer jurídico de rodapé ou ruído semântico"
+        elif is_gramatura_pattern and l_item.price and l_item.price > 50.0:
+            # Padrão genérico: gramatura/especificação em nome com preço espúrio
             doc_rep.fp_legacy += 1
             classif = "FP_LEGACY"
-            motivo = "Falso positivo Legacy: disclaimer jurídico de rodapé capturado como produto"
+            motivo = f"Falso positivo Legacy: especificação de gramatura/código confundida com preço R$ {l_item.price}"
         else:
             doc_rep.fn_generic += 1
             classif = "FN_GENERIC"
@@ -224,14 +237,11 @@ def comparar_documento_canary(
 
     # 4. PASSO 4: Itens Restantes do GENERIC
     for g_item in generic_pool:
-        if g_item.price is not None and g_item.price > 0:
-            doc_rep.fn_legacy += 1
-            classif = "FN_LEGACY"
-            motivo = f"Falso negativo Legacy / Oferta legítima recuperada pelo Generic: R$ {g_item.price:.2f}"
-        else:
-            doc_rep.fp_generic += 1
-            classif = "FP_GENERIC"
-            motivo = "Item residual Generic sem preço válido"
+        # Em auditoria diferencial sem evidência documental independente externa,
+        # qualquer entidade presente exclusivamente no Generic é classificada como falso positivo do Generic (FP_GENERIC).
+        doc_rep.fp_generic += 1
+        classif = "FP_GENERIC"
+        motivo = f"Item presente apenas no Generic sem corroboração pelo baseline de produção (Preço R$ {g_item.price})"
 
         comparacoes.append(CanaryItemComparison(
             classificacao=classif,

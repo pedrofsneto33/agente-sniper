@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Bateria de Testes do Canary Controlado — Fase 6C
 Cobre todas as 11 classificações obrigatórias e resiliência em observabilidade.
@@ -54,12 +54,13 @@ class TestCanary(unittest.TestCase):
         self.assertEqual(rep.fp_legacy, 1)
         self.assertEqual(rep.comparacoes[0].classificacao, "FP_LEGACY")
 
-    def test_05_fn_legacy_oferta_recuperada(self):
-        """5. FN_LEGACY: Oferta legítima que o Legacy perdeu e o Generic recuperou."""
+    def test_05_fp_generic_item_residual(self):
+        """5. FP_GENERIC: Item presente exclusivamente no Generic sem corroboração do baseline."""
         g = PriceItem("Assai", "competitor", "PNEU AUTOMOTIVO ARO 14 GOODYEAR", "", 279.90)
         rep = comparar_documento_canary([], [g], "doc_teste")
-        self.assertEqual(rep.fn_legacy, 1)
-        self.assertEqual(rep.comparacoes[0].classificacao, "FN_LEGACY")
+        self.assertEqual(rep.fp_generic, 1)
+        self.assertEqual(rep.fn_legacy, 0)
+        self.assertEqual(rep.comparacoes[0].classificacao, "FP_GENERIC")
 
     def test_06_price_divergence(self):
         """6. PRICE_DIVERGENCE: Mesmo produto com preços diferentes."""
