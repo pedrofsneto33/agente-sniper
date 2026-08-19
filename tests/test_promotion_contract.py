@@ -121,8 +121,8 @@ class TestPromotionContract(unittest.TestCase):
                 # Executa uma segunda run com um preço reduzido para testar cálculo de deltas
                 snapshots_2 = [dict(s) for s in snapshots_1]
                 snapshots_2[0]["price"] = round(snapshots_2[0]["price"] * 0.90, 2)
-                mem.save_run("run_replay_shadow_002", [], {}, "2026-08-19T01:00:00")
                 res_hist_2 = mem.save_price_snapshots("run_replay_shadow_002", snapshots_2)
+                mem.save_run("run_replay_shadow_002", [], {}, "2026-08-19T01:00:00")
                 self.assertEqual(len(res_hist_2["mudancas"]), 1)
                 self.assertEqual(res_hist_2["mudancas"][0]["change_pct"], -10.0)
             finally:

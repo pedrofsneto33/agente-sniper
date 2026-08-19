@@ -39,15 +39,16 @@ class EntityResolver(ABC):
         dimensoes_pagina: Optional[Tuple[float, float]] = None
     ) -> List[ExtractedEntity]:
         """
-        Consolida concorrência entre entidades da mesma oferta/coluna com base na hierarquia de evidência.
+        Consolida concorrência entre entidades da mesma oferta/coluna com base na hierarquia de evidência e relações promocionais.
         1. Preços bare-number únicos/isolados são 100% PRESERVADOS.
-        2. Quando há concorrência espacial no mesmo card entre uma âncora forte (EXPLICIT_CURRENCY / CADENCE_PRICE)
+        2. Relações promocionais explícitas (De/Por) no mesmo card são unificadas em uma única entidade (price = current_price, old_price = old_price, promotion = True).
+        3. Quando há concorrência espacial no mesmo card entre uma âncora forte (EXPLICIT_CURRENCY / CADENCE_PRICE)
            e uma âncora fraca (BARE_DECIMAL), a âncora forte domina a oferta e a âncora fraca é subordinada/absorvida.
         """
         if len(entidades) <= 1:
             return list(entidades)
 
-        from extractors.models import BoundingBox
+        from extractors.models import BoundingBox, AnchorRole
 
         w_doc, h_doc = dimensoes_pagina if dimensoes_pagina else (2000.0, 3000.0)
         if w_doc <= 1.0:
@@ -59,6 +60,74 @@ class EntityResolver(ABC):
         dy_ancoras_max_px = 0.08 * h_doc
 
         subordinadas_indices = set()
+
+        # PASSO 1: Consolidação Promocional De/Por (com marcadores semânticos explícitos)
+        for i, ent_a in enumerate(entidades):
+            if i in subordinadas_indices:
+                continue
+            ancora_a = ent_a.ancoras[0] if ent_a.ancoras else None
+            if not ancora_a or not ancora_a.bbox:
+                continue
+            role_a = getattr(ancora_a, "role", AnchorRole.STANDALONE)
+            box_a = ancora_a.bbox
+
+            for j, ent_b in enumerate(entidades):
+                if i == j or j in subordinadas_indices:
+                    continue
+                ancora_b = ent_b.ancoras[0] if ent_b.ancoras else None
+                if not ancora_b or not ancora_b.bbox:
+                    continue
+                role_b = getattr(ancora_b, "role", AnchorRole.STANDALONE)
+                box_b = ancora_b.bbox
+
+                # Alinhamento e proximidade espacial de mesmo card
+                x_overlap = max(0.0, min(box_a.x_max, box_b.x_max) - max(box_a.x_min, box_b.x_min))
+                min_w = min(box_a.largura, box_b.largura)
+                overlap_x_ratio = (x_overlap / min_w) if min_w > 0 else 0.0
+                dy_ancoras = max(0.0, max(box_a.y_min, box_b.y_min) - min(box_a.y_max, box_b.y_max))
+                is_same_card = (overlap_x_ratio >= 0.40 or box_a.distance_to(box_b) <= dist_max_px) and dy_ancoras <= dy_ancoras_max_px
+
+                if not is_same_card:
+                    continue
+
+                # Caso 1.1: ent_a é OLD_PRICE e ent_b é CURRENT_PRICE (ou STANDALONE)
+                if role_a == AnchorRole.OLD_PRICE and role_b in (AnchorRole.CURRENT_PRICE, AnchorRole.STANDALONE):
+                    subordinadas_indices.add(i)
+                    ent_b.old_price = float(ent_a.valor) if ent_a.valor is not None else None
+                    ent_b.atributos["old_price"] = ent_b.old_price
+                    ent_b.atributos["promocao"] = True
+                    ent_b.atributos["tipo_oferta"] = "desconto_de_por"
+                    ent_b.origem_tipo = "multiplas_ancoras"
+
+                    nome_a = ent_a.atributos.get("nome", "")
+                    nome_b = ent_b.atributos.get("nome", "")
+                    if nome_a and not nome_b:
+                        ent_b.atributos["nome"] = nome_a
+                    elif nome_a and nome_b and nome_a not in nome_b:
+                        ent_b.atributos["nome"] = f"{nome_a} {nome_b}".strip()
+
+                    ent_b.evidencias.extend(ent_a.evidencias)
+                    break
+
+                # Caso 1.2: ent_b é OLD_PRICE e ent_a é CURRENT_PRICE (ou STANDALONE)
+                elif role_b == AnchorRole.OLD_PRICE and role_a in (AnchorRole.CURRENT_PRICE, AnchorRole.STANDALONE):
+                    subordinadas_indices.add(j)
+                    ent_a.old_price = float(ent_b.valor) if ent_b.valor is not None else None
+                    ent_a.atributos["old_price"] = ent_a.old_price
+                    ent_a.atributos["promocao"] = True
+                    ent_a.atributos["tipo_oferta"] = "desconto_de_por"
+                    ent_a.origem_tipo = "multiplas_ancoras"
+
+                    nome_a = ent_a.atributos.get("nome", "")
+                    nome_b = ent_b.atributos.get("nome", "")
+                    if nome_b and not nome_a:
+                        ent_a.atributos["nome"] = nome_b
+                    elif nome_a and nome_b and nome_b not in nome_a:
+                        ent_a.atributos["nome"] = f"{nome_b} {nome_a}".strip()
+
+                    ent_a.evidencias.extend(ent_b.evidencias)
+
+        # PASSO 2: Subordinação Forte vs Bare (Fase 15)
         for i, ent_a in enumerate(entidades):
             if i in subordinadas_indices:
                 continue

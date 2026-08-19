@@ -7,7 +7,7 @@ Suporta regras plugáveis para múltiplos domínios: Moeda, Processo Judicial, P
 from abc import ABC, abstractmethod
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from extractors.models import BoundingBox, SpatialToken, CandidateAnchor, RawSpatialDocument, AnchorEvidenceKind
+from extractors.models import BoundingBox, SpatialToken, CandidateAnchor, RawSpatialDocument, AnchorEvidenceKind, AnchorRole
 
 
 class CandidateRule(ABC):
@@ -27,7 +27,7 @@ class StrictCurrencyRule(CandidateRule):
     """
     Regra estrita para detecção de valores monetários e cadências de preços multi-nicho.
     Discrimina rigorosamente contra gramaturas, volumes, dimensões, percentuais, datas, CNPJs e processos judiciais.
-    Classifica âncoras em EXPLICIT_CURRENCY, CADENCE_PRICE e BARE_DECIMAL.
+    Classifica âncoras em EXPLICIT_CURRENCY, CADENCE_PRICE e BARE_DECIMAL, além de identificar papéis relacionais (OLD_PRICE, CURRENT_PRICE).
     """
     
     def __init__(self, default_currency: str = "BRL", min_val: float = 0.05, max_val: float = 999999.0):
@@ -42,6 +42,10 @@ class StrictCurrencyRule(CandidateRule):
             r'\s+CADA|\s+POR\s+M[EÊ]S|\s+MENSAL|\s+ANUAL|\s+DI[AÁ]RIO|\s+POR\s+DIA)',
             re.IGNORECASE
         )
+        self._re_old_price_token = re.compile(r'^(?:de|de:|antes|era|antigo|normal)$', re.IGNORECASE)
+        self._re_old_price_inline = re.compile(r'(?:^\s*de\s*:\s*|^\s*de\s+(?:R\$|\$|€|£|US\$|\d)|\bantes\b|\bera\b|\bde:\b)', re.IGNORECASE)
+        self._re_current_price_token = re.compile(r'^(?:por|por:|agora|oferta|promocional|pague|promo[cç][aã]o|por:)$', re.IGNORECASE)
+        self._re_current_price_inline = re.compile(r'(?:^\s*por\s*:\s*|^\s*por\s+(?:R\$|\$|€|£|US\$|\d)|\bagora\b|\bpague\b|\bpor:\b)', re.IGNORECASE)
         self._re_unidades_medida = re.compile(
             r'(\b|\d)(g|kg|mg|ml|l|litro|litros|sach[eê]s?|c[aá]psulas?|unidades?|un|cm|mm|m|w|v|hz|pct|pack|anos?|meses|dias|h|min|s)\b',
             re.IGNORECASE
@@ -81,6 +85,10 @@ class StrictCurrencyRule(CandidateRule):
             tem_cadencia = bool(match_cadencia)
             cadencia_str = match_cadencia.group(0).strip() if match_cadencia else None
 
+            # Papel relacional no próprio token (ex: "De R$ 100,00" ou "Por R$ 79,90")
+            tem_marcador_old = bool(self._re_old_price_token.match(texto) or self._re_old_price_inline.search(texto))
+            tem_marcador_curr = bool(self._re_current_price_token.match(texto) or self._re_current_price_inline.search(texto))
+
             # 2. Contexto vizinho imediato e espacial 2D (mesma linha na janela local)
             vizinhos_a_checar = []
             inicio_janela = max(0, idx - 15)
@@ -114,6 +122,22 @@ class StrictCurrencyRule(CandidateRule):
                         if m_cad:
                             tem_cadencia = True
                             cadencia_str = m_cad.group(0).strip()
+
+            # Se o próprio token não tiver marcador, checa tokens precedentes imediatos (v_idx < idx) na mesma linha
+            if not (tem_marcador_old or tem_marcador_curr):
+                inicio_precedentes = max(0, idx - 5)
+                for v_idx in range(inicio_precedentes, idx):
+                    v = tokens[v_idx]
+                    v_txt = v.texto.strip()
+                    dist_ok = True
+                    if token.has_geometry and v.has_geometry and token.bbox and v.bbox:
+                        y_overlap = max(0.0, min(token.bbox.y_max, v.bbox.y_max) - max(token.bbox.y_min, v.bbox.y_min))
+                        dist_ok = (y_overlap > 0.0) and (token.bbox.distance_to(v.bbox) <= dist_max_px or idx - v_idx <= 2)
+                    if dist_ok:
+                        if self._re_old_price_token.match(v_txt) or self._re_old_price_inline.search(v_txt):
+                            tem_marcador_old = True
+                        if self._re_current_price_token.match(v_txt) or self._re_current_price_inline.search(v_txt):
+                            tem_marcador_curr = True
 
             # Rejeição de unidades isoladas, percentuais, datas e identificadores
             if not tem_simbolo_moeda and not tem_cadencia:
@@ -164,7 +188,15 @@ class StrictCurrencyRule(CandidateRule):
             else:
                 evidence_kind = AnchorEvidenceKind.BARE_DECIMAL
 
-            # 6. Confiança da âncora
+            # 6. Classificação do papel relacional (AnchorRole)
+            if tem_marcador_old and not tem_marcador_curr:
+                role = AnchorRole.OLD_PRICE
+            elif tem_marcador_curr and not tem_marcador_old:
+                role = AnchorRole.CURRENT_PRICE
+            else:
+                role = AnchorRole.STANDALONE
+
+            # 7. Confiança da âncora
             conf_base = token.confianca
             if evidence_kind == AnchorEvidenceKind.EXPLICIT_CURRENCY:
                 conf_base = min(1.0, conf_base + 0.15)
@@ -181,10 +213,12 @@ class StrictCurrencyRule(CandidateRule):
                 bbox=token.bbox,
                 evidence_kind=evidence_kind,
                 cadencia=cadencia_str,
+                role=role,
                 metadados={
                     "valor_formatado": f"{valor_float:.2f}",
                     "evidence_kind": evidence_kind.value,
                     "cadencia": cadencia_str,
+                    "role": role.value,
                     "regra_origem": self.name
                 }
             )

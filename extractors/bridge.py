@@ -98,6 +98,11 @@ def converter_entidades_para_price_items(
         peso_volume = str(ent.atributos.get("peso_volume", "") or "").strip()
         marca = str(ent.atributos.get("marca", "") or "").strip()
         valor_float = float(ent.valor) if ent.valor is not None else None
+        old_price_val = getattr(ent, "old_price", None)
+        if old_price_val is None and "old_price" in ent.atributos:
+            old_price_val = ent.atributos["old_price"]
+        old_price_float = float(old_price_val) if old_price_val is not None else None
+        is_promo = bool(ent.atributos.get("promocao", False) or old_price_float is not None)
         confianca = float(ent.confianca)
 
         item = PriceItem(
@@ -106,8 +111,8 @@ def converter_entidades_para_price_items(
             name=nome_produto,
             url=page_url,
             price=valor_float,
-            old_price=None,
-            promotion=False,
+            old_price=old_price_float,
+            promotion=is_promo,
             brand=marca,
             unit=peso_volume,
             sku="",

@@ -175,6 +175,13 @@ class AnchorEvidenceKind(str, Enum):
     TEMPORAL_OR_CODE  = "temporal_code"      # Identificador temporal ou código: 2026, 0812345-67...
 
 
+class AnchorRole(str, Enum):
+    """Papel relacional da âncora dentro de uma oferta ou contexto estruturado."""
+    STANDALONE    = "standalone"     # Preço padrão/isolado vigente
+    OLD_PRICE     = "old_price"      # Preço anterior/regular em oferta ("De", "Antes", "Era", etc.)
+    CURRENT_PRICE = "current_price"  # Preço promocional/vigente em oferta ("Por", "Agora", "Promoção", etc.)
+
+
 @dataclass(frozen=True)
 class CandidateAnchor:
     """Âncora candidata identificada (Preço, Salário, Processo, Data, CNPJ, etc.)."""
@@ -187,6 +194,7 @@ class CandidateAnchor:
     bbox: Optional[BoundingBox] = None
     evidence_kind: AnchorEvidenceKind = AnchorEvidenceKind.BARE_DECIMAL
     cadencia: Optional[str] = None
+    role: AnchorRole = AnchorRole.STANDALONE
     metadados: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -203,6 +211,7 @@ class CandidateAnchor:
             "confianca": round(self.confianca, 4),
             "evidence_kind": self.evidence_kind.value if hasattr(self.evidence_kind, "value") else str(self.evidence_kind),
             "cadencia": self.cadencia,
+            "role": self.role.value if hasattr(self.role, "value") else str(self.role),
             "bbox": self.bbox.to_dict() if self.bbox is not None else None,
             "token_id": self.token_ref.id_token,
         }
@@ -299,6 +308,7 @@ class ExtractedEntity:
     entidade: str
     atributos: Dict[str, Any]
     valor: Optional[Any] = None
+    old_price: Optional[float] = None
     unidade: Optional[str] = None
     confianca: float = 0.0
     origem_tipo: str = "ancora_unica"  # "ancora_unica", "multiplas_ancoras", "apenas_contexto"
@@ -307,7 +317,7 @@ class ExtractedEntity:
     evidencias: List[EvidenceItem] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "entidade": self.entidade,
             "origem_tipo": self.origem_tipo,
             "atributos": self.atributos,
@@ -317,6 +327,11 @@ class ExtractedEntity:
             "confianca": round(self.confianca, 4),
             "evidencias": [e.to_dict() for e in self.evidencias],
         }
+        if self.old_price is not None:
+            d["old_price"] = self.old_price
+        elif "old_price" in self.atributos and self.atributos["old_price"] is not None:
+            d["old_price"] = self.atributos["old_price"]
+        return d
 
 
 @dataclass

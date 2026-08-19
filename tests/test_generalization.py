@@ -906,6 +906,149 @@ class TestGeneralization(unittest.TestCase):
                 "Execução do pipeline deve ser estritamente determinística"
             )
 
+    def test_26_p2_2_depor_promotional_offers_multi_niche(self):
+        """Fase 16 (P2.2): Validação abrangente de ofertas promocionais De/Por em múltiplos nichos e anti-overfitting."""
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument, AnchorRole
+        from extractors.adapters import GeneralSpatialAdapter, FlyerProductAdapter
+        from extractors.bridge import converter_entidades_para_price_items
+
+        dim = (2000.0, 3000.0)
+        ad = GeneralSpatialAdapter()
+
+        # 1. Restaurante: De R$ 79,90 Por R$ 59,90
+        doc_rest = RawSpatialDocument("doc_rest", "restaurant", dim, [
+            SpatialToken("PRATO ESPECIAL PICANHA", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 79,90", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 59,90", BoundingBox(100.0, 270.0, 250.0, 300.0), 0.99, 3),
+        ])
+        res_rest = ad.processar_documento(doc_rest)
+        self.assertEqual(len(res_rest.entidades), 1)
+        ent_rest = res_rest.entidades[0]
+        self.assertEqual(ent_rest.valor, 59.90)
+        self.assertEqual(ent_rest.old_price, 79.90)
+        self.assertTrue(ent_rest.atributos.get("promocao"))
+
+        # 2. Hotel: Diária: De R$ 500,00 Por R$ 350,00
+        doc_hotel = RawSpatialDocument("doc_hotel", "hotel", dim, [
+            SpatialToken("DIÁRIA SUÍTE MASTER", BoundingBox(100.0, 200.0, 400.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 500,00", BoundingBox(100.0, 240.0, 260.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 350,00", BoundingBox(100.0, 270.0, 260.0, 300.0), 0.99, 3),
+        ])
+        res_hotel = ad.processar_documento(doc_hotel)
+        self.assertEqual(len(res_hotel.entidades), 1)
+        self.assertEqual(res_hotel.entidades[0].valor, 350.00)
+        self.assertEqual(res_hotel.entidades[0].old_price, 500.00)
+
+        # 3. Clínica: Tratamento: De R$ 1.000,00 Por R$ 799,90
+        doc_clin = RawSpatialDocument("doc_clin", "clinic", dim, [
+            SpatialToken("TRATAMENTO ESTÉTICO", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 1.000,00", BoundingBox(100.0, 240.0, 280.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 799,90", BoundingBox(100.0, 270.0, 280.0, 300.0), 0.99, 3),
+        ])
+        res_clin = ad.processar_documento(doc_clin)
+        self.assertEqual(len(res_clin.entidades), 1)
+        self.assertEqual(res_clin.entidades[0].valor, 799.90)
+        self.assertEqual(res_clin.entidades[0].old_price, 1000.00)
+
+        # 4. SaaS: Plano Pro: De R$ 199,90/mês Por R$ 149,90/mês
+        doc_saas = RawSpatialDocument("doc_saas", "saas", dim, [
+            SpatialToken("PLANO ENTERPRISE", BoundingBox(100.0, 200.0, 400.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 199,90/mês", BoundingBox(100.0, 240.0, 300.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 149,90/mês", BoundingBox(100.0, 270.0, 300.0, 300.0), 0.99, 3),
+        ])
+        res_saas = ad.processar_documento(doc_saas)
+        self.assertEqual(len(res_saas.entidades), 1)
+        self.assertEqual(res_saas.entidades[0].valor, 149.90)
+        self.assertEqual(res_saas.entidades[0].old_price, 199.90)
+
+        # 5. B2B: Contrato: De R$ 10.000,00 Por R$ 8.500,00
+        doc_b2b = RawSpatialDocument("doc_b2b", "b2b", dim, [
+            SpatialToken("CONTRATO ANUAL CONSULTORIA", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 10.000,00", BoundingBox(100.0, 240.0, 300.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 8.500,00", BoundingBox(100.0, 270.0, 300.0, 300.0), 0.99, 3),
+        ])
+        res_b2b = ad.processar_documento(doc_b2b)
+        self.assertEqual(len(res_b2b.entidades), 1)
+        self.assertEqual(res_b2b.entidades[0].valor, 8500.00)
+        self.assertEqual(res_b2b.entidades[0].old_price, 10000.00)
+
+        # 6. Bare com marcador: De 100,00 Por 79,90
+        doc_bare_depor = RawSpatialDocument("doc_bare_depor", "retail", dim, [
+            SpatialToken("PRODUTO BARE PROMOÇÃO", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De 100,00", BoundingBox(100.0, 240.0, 220.0, 265.0), 0.99, 2),
+            SpatialToken("Por 79,90", BoundingBox(100.0, 270.0, 220.0, 300.0), 0.99, 3),
+        ])
+        res_bare_depor = ad.processar_documento(doc_bare_depor)
+        self.assertEqual(len(res_bare_depor.entidades), 1)
+        self.assertEqual(res_bare_depor.entidades[0].valor, 79.90)
+        self.assertEqual(res_bare_depor.entidades[0].old_price, 100.00)
+
+        # 7. Centavos: De R$ 100,00 Por R$ 99,99
+        doc_cent = RawSpatialDocument("doc_cent", "retail", dim, [
+            SpatialToken("PRODUTO DESCONTO MÍNIMO", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 99,99", BoundingBox(100.0, 270.0, 250.0, 300.0), 0.99, 3),
+        ])
+        res_cent = ad.processar_documento(doc_cent)
+        self.assertEqual(len(res_cent.entidades), 1)
+        self.assertEqual(res_cent.entidades[0].valor, 99.99)
+        self.assertEqual(res_cent.entidades[0].old_price, 100.00)
+
+        # 8. OCR Fragmentado: ["De", "R$", "100,00", "Por", "R$", "79,90"]
+        doc_frag = RawSpatialDocument("doc_frag_depor", "test", dim, [
+            SpatialToken("PRODUTO FRAGMENTADO", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("De", BoundingBox(100.0, 240.0, 130.0, 265.0), 0.99, 2),
+            SpatialToken("R$", BoundingBox(135.0, 240.0, 160.0, 265.0), 0.99, 3),
+            SpatialToken("100,00", BoundingBox(165.0, 240.0, 240.0, 265.0), 0.99, 4),
+            SpatialToken("Por", BoundingBox(100.0, 270.0, 135.0, 295.0), 0.99, 5),
+            SpatialToken("R$", BoundingBox(140.0, 270.0, 165.0, 295.0), 0.99, 6),
+            SpatialToken("79,90", BoundingBox(170.0, 270.0, 240.0, 295.0), 0.99, 7),
+        ])
+        res_frag = ad.processar_documento(doc_frag)
+        self.assertEqual(len(res_frag.entidades), 1)
+        self.assertEqual(res_frag.entidades[0].valor, 79.90)
+        self.assertEqual(res_frag.entidades[0].old_price, 100.00)
+        self.assertTrue(res_frag.entidades[0].atributos.get("promocao"))
+
+        # 9. Anti-Overfitting 1: R$ 100,00 e R$ 79,90 sem marcador -> 2 entidades independentes
+        doc_sem_marc = RawSpatialDocument("doc_sem_marc", "test", dim, [
+            SpatialToken("PRODUTO ALFA", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+            SpatialToken("R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("R$ 79,90", BoundingBox(100.0, 275.0, 250.0, 300.0), 0.99, 3),
+        ])
+        res_sem_marc = ad.processar_documento(doc_sem_marc)
+        self.assertEqual(len(res_sem_marc.entidades), 2, "Sem marcador relacional, NÃO inventar promoção!")
+        for e in res_sem_marc.entidades:
+            self.assertIsNone(e.old_price)
+            self.assertFalse(e.atributos.get("promocao", False))
+
+        # 10. Anti-Overfitting 2: Cards vizinhos distintos com De/Por independentes
+        doc_vizinhos = RawSpatialDocument("doc_vizinhos", "test", dim, [
+            # Card 1 (Esquerda)
+            SpatialToken("PRODUTO A", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 80,00", BoundingBox(100.0, 270.0, 250.0, 295.0), 0.99, 3),
+            # Card 2 (Direita)
+            SpatialToken("PRODUTO B", BoundingBox(600.0, 200.0, 850.0, 230.0), 0.99, 4),
+            SpatialToken("De R$ 200,00", BoundingBox(600.0, 240.0, 750.0, 265.0), 0.99, 5),
+            SpatialToken("Por R$ 150,00", BoundingBox(600.0, 270.0, 750.0, 295.0), 0.99, 6),
+        ])
+        res_vizinhos = ad.processar_documento(doc_vizinhos)
+        self.assertEqual(len(res_vizinhos.entidades), 2, "Cards vizinhos devem manter suas próprias promoções")
+        v_a = next(e for e in res_vizinhos.entidades if "PRODUTO A" in e.atributos.get("nome", "").upper())
+        v_b = next(e for e in res_vizinhos.entidades if "PRODUTO B" in e.atributos.get("nome", "").upper())
+        self.assertEqual(v_a.valor, 80.00)
+        self.assertEqual(v_a.old_price, 100.00)
+        self.assertEqual(v_b.valor, 150.00)
+        self.assertEqual(v_b.old_price, 200.00)
+
+        # 11. Conversão Bridge downstream: PriceItem recebe price, old_price e promotion
+        items = converter_entidades_para_price_items(res_rest.entidades)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].price, 59.90)
+        self.assertEqual(items[0].old_price, 79.90)
+        self.assertTrue(items[0].promotion)
+
 
 if __name__ == "__main__":
     unittest.main()
