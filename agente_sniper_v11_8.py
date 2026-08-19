@@ -209,6 +209,8 @@ MAX_PRECO_ITENS = int(os.getenv("MAX_PRECO_ITENS", "15"))
 MAX_BUSCAS_PRECO_CONCORRENTE = int(os.getenv("MAX_BUSCAS_PRECO_CONCORRENTE", "15"))
 PRECO_MIN_SIMILARIDADE = float(os.getenv("PRECO_MIN_SIMILARIDADE", "0.72"))
 PRECO_MAX_RESULTADOS_POR_BUSCA = int(os.getenv("PRECO_MAX_RESULTADOS_POR_BUSCA", "8"))
+PRECO_MAX_OCR_ITENS_POR_PAGINA = min(int(os.getenv("PRECO_MAX_OCR_ITENS_POR_PAGINA", "50")), 100)
+EXTRACTION_ENGINE = os.getenv("EXTRACTION_ENGINE", "generic").strip().lower()
 
 # JSON opcional para qualquer nicho. Exemplo:
 # PRICE_SOURCES_JSON=[{"name":"Carvalho","role":"target","url":"..."},{"name":"Concorrente","role":"competitor","url":"...","search_url":"https://site/catalogo?q={query}"}]
@@ -1396,6 +1398,70 @@ def coletar_itens_preco_fonte(source: Dict[str, Any], query: str = "") -> List[P
     role = source.get("role", "competitor")
     name = source.get("name", "Fonte")
     location_note = str(source.get("location_note", ""))
+
+    engine = os.getenv("EXTRACTION_ENGINE", EXTRACTION_ENGINE).strip().lower()
+    if engine not in {"legacy", "generic", "shadow"}:
+        engine = "legacy"
+
+    # Se a fonte contiver arquivo ou payload de OCR bruto (folhetos, tablóides, encartes)
+    ocr_origem = source.get("ocr_path") or source.get("ocr_json") or source.get("deteccoes")
+    if ocr_origem:
+        try:
+            from extractors.bridge import executar_pipeline_extracao
+            if engine == "generic":
+                res = executar_pipeline_extracao(ocr_origem, engine="generic", source=name, role=role, page_url=url)
+                return res.get("price_items", [])[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
+            elif engine == "shadow":
+                res_leg = executar_pipeline_extracao(ocr_origem, engine="legacy", source=name, role=role, page_url=url)
+                items_leg = res_leg.get("price_items", [])
+                try:
+                    res_gen = executar_pipeline_extracao(ocr_origem, engine="generic", source=name, role=role, page_url=url)
+                    items_gen = res_gen.get("price_items", [])
+                    logger.info("[SHADOW EXTRACT] %s -> Legacy: %d itens | Generic: %d itens", name, len(items_leg), len(items_gen))
+                    try:
+                        from extractors.canary import comparar_documento_canary
+                        from extractors.canary_history import CanaryHistoryTracker, calcular_hash_conteudo_ou_arquivo
+                        doc_rep = comparar_documento_canary(items_leg, items_gen, documento_id=str(ocr_origem))
+                        h = calcular_hash_conteudo_ou_arquivo(ocr_origem)
+                        tracker = CanaryHistoryTracker()
+                        tracker.registrar_observacao(
+                            run_id=f"shadow_{int(time.time())}",
+                            document_id=Path(str(ocr_origem)).name if isinstance(ocr_origem, (str, Path)) else "payload",
+                            document_hash=h,
+                            source=name,
+                            doc_report=doc_rep,
+                            generic_crashed=False
+                        )
+                    except Exception as e_hist:
+                        logger.debug("[SHADOW HISTORICO] %s", str(e_hist)[:100])
+                except Exception as e_gen:
+                    logger.warning("[SHADOW EXTRACT FALHA GENERIC] %s: %s", name, str(e_gen)[:120])
+                    try:
+                        from extractors.canary import CanaryDocumentReport
+                        from extractors.canary_history import CanaryHistoryTracker, calcular_hash_conteudo_ou_arquivo
+                        h = calcular_hash_conteudo_ou_arquivo(ocr_origem)
+                        tracker = CanaryHistoryTracker()
+                        tracker.registrar_observacao(
+                            run_id=f"shadow_{int(time.time())}",
+                            document_id=Path(str(ocr_origem)).name if isinstance(ocr_origem, (str, Path)) else "payload",
+                            document_hash=h,
+                            source=name,
+                            doc_report=CanaryDocumentReport(documento_id=str(ocr_origem), total_legacy=len(items_leg)),
+                            generic_crashed=True
+                        )
+                    except Exception:
+                        pass
+                return items_leg[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
+            else:
+                res_leg = executar_pipeline_extracao(ocr_origem, engine="legacy", source=name, role=role, page_url=url)
+                return res_leg.get("price_items", [])[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
+        except Exception as e:
+            if engine == "generic":
+                logger.error("[EXTRACTION GENERIC ERRO] %s: %s", name, str(e))
+                raise
+            logger.warning("[EXTRACTION OCR] %s", str(e)[:160])
+
+    # Fluxo Web HTML padrão (LEGACY)
     if query and source.get("search_url"):
         url = _buscar_preco_site(str(source["search_url"]), query)
     if not url:

@@ -29,3 +29,8 @@ venv/
 *.log
 # Arquivos legados / backups históricos
 legacy_archive/
+
+# Python cache
+__pycache__/
+*.pyc
+

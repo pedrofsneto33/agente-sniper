@@ -1,0 +1,331 @@
+# -*- coding: utf-8 -*-
+"""
+Bateria de Testes de Generalização do Motor de Extração — Fase 3
+Validação em domínios heterogêneos: Jurídico, Financeiro, Empregos, Tabelas, Texto Puro e Invariância de Escala.
+"""
+
+import unittest
+from extractors.models import (
+    BoundingBox,
+    SpatialToken,
+    RawSpatialDocument,
+    CandidateAnchor,
+    EvidenceRegion,
+    ExtractedEntity,
+    AnchorEvidenceKind,
+)
+from extractors.spatial_normalizer import normalizar_documento_espacial
+from extractors.candidates import (
+    StrictCurrencyRule,
+    LegalProcessRule,
+    PercentageRule,
+    SalaryRule,
+    TaxIdRule,
+    DateRule,
+    MeasurementContextRule,
+    CandidateDetector,
+)
+from extractors.clustering import clusterizar_espacialmente
+from extractors.entity_resolver import GenericEntityResolver
+from extractors.evaluation import GroundTruthItem, avaliar_extracao
+
+
+class TestGeneralization(unittest.TestCase):
+    """Testa a capacidade do motor de operar de forma agnóstica em múltiplos domínios."""
+
+    def test_01_dominio_juridico_processos(self):
+        """Testa extração em diário oficial jurídico com número de processo e sanção."""
+        dim = (1000.0, 1500.0)
+        # Processo 1
+        t_proc1 = SpatialToken("Proc. 0812345-67.2026.8.18.0001", BoundingBox(100, 200, 450, 230), id_token=1)
+        t_vara1 = SpatialToken("2ª VARA CÍVEL DE TERESINA", BoundingBox(100, 240, 400, 265), id_token=2)
+        t_reu1 = SpatialToken("RÉU: EMPRESA DISTRIBUIDORA LTDA", BoundingBox(100, 275, 450, 300), id_token=3)
+
+        # Processo 2
+        t_proc2 = SpatialToken("Proc. 0009876-54.2025.8.18.0000", BoundingBox(100, 600, 450, 630), id_token=4)
+        t_vara2 = SpatialToken("VARA DE EXECUÇÕES FISCAIS", BoundingBox(100, 640, 400, 665), id_token=5)
+        t_reu2 = SpatialToken("RÉU: COMERCIAL SILVA ME", BoundingBox(100, 675, 400, 700), id_token=6)
+
+        doc = RawSpatialDocument("doc_juridico", "legal_gazette", dim, [t_proc1, t_vara1, t_reu1, t_proc2, t_vara2, t_reu2])
+
+        detector = CandidateDetector(rules=[LegalProcessRule()])
+        doc_norm = normalizar_documento_espacial(doc)
+        ancoras = detector.detect_anchors(doc_norm)
+
+        self.assertEqual(len(ancoras), 2)
+        self.assertEqual(ancoras[0].valor_normalizado, "0812345-67.2026.8.18.0001")
+        self.assertEqual(ancoras[1].valor_normalizado, "0009876-54.2025.8.18.0000")
+
+        regioes = clusterizar_espacialmente(doc_norm, ancoras)
+        resolver = GenericEntityResolver("processo_judicial")
+        resultado = resolver.resolve_all(regioes)
+
+        gt = [
+            GroundTruthItem("processo_judicial", "0812345-67.2026.8.18.0001", identificador_item="gt_p1"),
+            GroundTruthItem("processo_judicial", "0009876-54.2025.8.18.0000", identificador_item="gt_p2"),
+        ]
+        metricas = avaliar_extracao(resultado.entidades, gt)
+        self.assertEqual(metricas.f1_score, 1.0)
+        self.assertEqual(metricas.falsos_positivos, 0)
+
+    def test_02_dominio_financeiro_indicadores_e_deltas(self):
+        """Testa extração em relatório financeiro (DRE/EBITDA/Percentuais)."""
+        dim = (1000.0, 1000.0)
+        t_ebitda_label = SpatialToken("EBITDA AJUSTADO", BoundingBox(100, 100, 300, 130), id_token=1)
+        t_ebitda_pct = SpatialToken("+18,5%", BoundingBox(350, 100, 450, 130), id_token=2)
+        t_rec_label = SpatialToken("RECEITA LIQUIDA", BoundingBox(100, 200, 300, 230), id_token=3)
+        t_rec_pct = SpatialToken("-4,2%", BoundingBox(350, 200, 450, 230), id_token=4)
+
+        doc = RawSpatialDocument("doc_fin", "earnings_report", dim, [t_ebitda_label, t_ebitda_pct, t_rec_label, t_rec_pct])
+
+        detector = CandidateDetector(rules=[PercentageRule()])
+        doc_norm = normalizar_documento_espacial(doc)
+        ancoras = detector.detect_anchors(doc_norm)
+
+        self.assertEqual(len(ancoras), 2)
+        self.assertEqual(ancoras[0].valor_normalizado, 18.5)
+        self.assertEqual(ancoras[1].valor_normalizado, -4.2)
+
+        regioes = clusterizar_espacialmente(doc_norm, ancoras)
+        resolver = GenericEntityResolver("indicador_financeiro")
+        resultado = resolver.resolve_all(regioes)
+
+        gt = [
+            GroundTruthItem("indicador_financeiro", 18.5, identificador_item="gt_ebitda"),
+            GroundTruthItem("indicador_financeiro", -4.2, identificador_item="gt_rec"),
+        ]
+        metricas = avaliar_extracao(resultado.entidades, gt)
+        self.assertEqual(metricas.f1_score, 1.0)
+
+    def test_03_dominio_vagas_emprego(self):
+        """Testa extração em anúncio de vagas com salários."""
+        dim = (1000.0, 1200.0)
+        t_cargo1 = SpatialToken("ENGENHEIRO DE SOFTWARE SENIOR", BoundingBox(100, 150, 500, 180), id_token=1)
+        t_sal1 = SpatialToken("SALÁRIO: R$ 15.000,00 / MÊS", BoundingBox(100, 190, 400, 220), id_token=2)
+
+        t_cargo2 = SpatialToken("ANALISTA DE QA JUNIOR", BoundingBox(100, 500, 400, 530), id_token=3)
+        t_sal2 = SpatialToken("REMUNERAÇÃO: R$ 4.200,00 CLT", BoundingBox(100, 540, 400, 570), id_token=4)
+
+        doc = RawSpatialDocument("doc_vagas", "job_board", dim, [t_cargo1, t_sal1, t_cargo2, t_sal2])
+
+        detector = CandidateDetector(rules=[SalaryRule()])
+        doc_norm = normalizar_documento_espacial(doc)
+        ancoras = detector.detect_anchors(doc_norm)
+
+        self.assertEqual(len(ancoras), 2)
+        self.assertEqual(ancoras[0].valor_normalizado, 15000.0)
+        self.assertEqual(ancoras[1].valor_normalizado, 4200.0)
+
+    def test_04_invariancia_geometrica_de_escala(self):
+        """Testa se documentos em resoluções 1000x2000, 2000x4000 e 4000x8000 produzem o mesmo resultado."""
+        def criar_doc(escala: float, dim: tuple[float, float]) -> RawSpatialDocument:
+            t1 = SpatialToken("PRODUTO TESTE", BoundingBox(100*escala, 400*escala, 400*escala, 450*escala), id_token=1)
+            t2 = SpatialToken("R$ 29,90 CADA", BoundingBox(100*escala, 500*escala, 300*escala, 550*escala), id_token=2)
+            return RawSpatialDocument(f"doc_scale_{escala}", "synthetic", dim, [t1, t2])
+
+        doc_1k = criar_doc(1.0, (1000.0, 2000.0))
+        doc_2k = criar_doc(2.0, (2000.0, 4000.0))
+        doc_4k = criar_doc(4.0, (4000.0, 8000.0))
+
+        detector = CandidateDetector([StrictCurrencyRule()])
+        resolver = GenericEntityResolver("produto")
+
+        res_1k = resolver.resolve_all(clusterizar_espacialmente(normalizar_documento_espacial(doc_1k), detector.detect_anchors(doc_1k)))
+        res_2k = resolver.resolve_all(clusterizar_espacialmente(normalizar_documento_espacial(doc_2k), detector.detect_anchors(doc_2k)))
+        res_4k = resolver.resolve_all(clusterizar_espacialmente(normalizar_documento_espacial(doc_4k), detector.detect_anchors(doc_4k)))
+
+        # Os valores e os textos devem ser 100% idênticos
+        self.assertEqual(res_1k.entidades[0].valor, 29.90)
+        self.assertEqual(res_2k.entidades[0].valor, 29.90)
+        self.assertEqual(res_4k.entidades[0].valor, 29.90)
+        self.assertEqual(res_1k.entidades[0].atributos["texto_completo"], res_4k.entidades[0].atributos["texto_completo"])
+
+    def test_05_resistencia_extrema_a_falsos_positivos(self):
+        """
+        Garante discriminação cirúrgica quando 9 formatos conflitantes coexistem no mesmo documento:
+        '250g', '1kg', '500ml', '10x5,2g', '17/08/2026', '0812345-67.2026', '00.000.000/0001-00', '15,5%', 'R$ 17,90'.
+        """
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("PACOTE 250g", BoundingBox(10, 10, 100, 30), id_token=1),
+            SpatialToken("FARINHA 1kg", BoundingBox(10, 40, 100, 60), id_token=2),
+            SpatialToken("LEITE 500ml", BoundingBox(10, 70, 100, 90), id_token=3),
+            SpatialToken("CAIXA 10x5,2g", BoundingBox(10, 100, 100, 120), id_token=4),
+            SpatialToken("VALIDADE 17/08/2026", BoundingBox(10, 130, 150, 150), id_token=5),
+            SpatialToken("AUTOS 0812345-67.2026", BoundingBox(10, 160, 200, 180), id_token=6),
+            SpatialToken("CNPJ 00.000.000/0001-00", BoundingBox(10, 190, 200, 210), id_token=7),
+            SpatialToken("JUROS +15,5%", BoundingBox(10, 220, 100, 240), id_token=8),
+            SpatialToken("PREÇO R$ 17,90", BoundingBox(10, 250, 120, 270), id_token=9),
+        ]
+        doc = RawSpatialDocument("doc_stress", "stress_test", dim, tokens)
+        doc_norm = normalizar_documento_espacial(doc)
+
+        # 1. Teste sob regra monetária: APENAS 17.90 deve ser âncora
+        ancoras_moeda = CandidateDetector([StrictCurrencyRule()]).detect_anchors(doc_norm)
+        self.assertEqual(len(ancoras_moeda), 1)
+        self.assertEqual(ancoras_moeda[0].valor_normalizado, 17.90)
+
+        # 2. Teste sob regra de processo judicial: APENAS 0812345-67.2026 deve ser âncora
+        ancoras_proc = CandidateDetector([LegalProcessRule()]).detect_anchors(doc_norm)
+        self.assertEqual(len(ancoras_proc), 1)
+        self.assertEqual(ancoras_proc[0].valor_normalizado, "0812345-67.2026")
+
+        # 3. Teste sob regra de percentual: APENAS 15.5 deve ser âncora
+        ancoras_pct = CandidateDetector([PercentageRule()]).detect_anchors(doc_norm)
+        self.assertEqual(len(ancoras_pct), 1)
+        self.assertEqual(ancoras_pct[0].valor_normalizado, 15.5)
+
+        # 4. Teste sob regra de CNPJ: APENAS o CNPJ deve ser âncora
+        ancoras_cnpj = CandidateDetector([TaxIdRule()]).detect_anchors(doc_norm)
+        self.assertEqual(len(ancoras_cnpj), 1)
+        self.assertEqual(ancoras_cnpj[0].valor_normalizado, "00.000.000/0001-00")
+
+        # 5. Teste sob regra de data: APENAS a data deve ser âncora
+        ancoras_data = CandidateDetector([DateRule()]).detect_anchors(doc_norm)
+        self.assertEqual(len(ancoras_data), 1)
+        self.assertEqual(ancoras_data[0].valor_normalizado, "17/08/2026")
+
+    def test_06_rastreabilidade_forense_total(self):
+        """Valida que toda entidade responde: quem originou, quem foi rejeitado, qual regra e por qual motivo."""
+        dim = (1000.0, 1000.0)
+        t_anc = SpatialToken("R$ 49,90", BoundingBox(100, 300, 200, 330), confianca=0.98, id_token=1)
+        t_ctx_perto = SpatialToken("PRODUTO EM OFERTA", BoundingBox(100, 250, 300, 280), confianca=0.92, id_token=2)
+        # Token muito longe à direita (excederá max_dx_rel=0.38 -> 380px)
+        t_ctx_longe = SpatialToken("OUTRA SEÇÃO DISTANTE", BoundingBox(800, 300, 950, 330), confianca=0.85, id_token=3)
+
+        doc = RawSpatialDocument("doc_audit", "audit_test", dim, [t_anc, t_ctx_perto, t_ctx_longe])
+        detector = CandidateDetector([StrictCurrencyRule()])
+        doc_norm = normalizar_documento_espacial(doc)
+        ancoras = detector.detect_anchors(doc_norm)
+
+        regioes = clusterizar_espacialmente(doc_norm, ancoras)
+        self.assertEqual(len(regioes), 1)
+
+        reg = regioes[0]
+        # 1. Qual regra criou a âncora?
+        self.assertEqual(reg.ancora.metadados["regra_origem"], "StrictCurrencyRule")
+
+        # 2. Quais tokens foram incluídos?
+        tokens_inc_ids = [t.id_token for t in reg.tokens_incluidos]
+        self.assertIn(2, tokens_inc_ids)
+
+        # 3. Quais tokens foram rejeitados e por quê?
+        self.assertEqual(len(reg.tokens_rejeitados), 1)
+        self.assertEqual(reg.tokens_rejeitados[0]["token_id"], 3)
+        self.assertIn("distancia_excessiva", reg.tokens_rejeitados[0]["motivo"])
+
+        # 4. A entidade final preserva todas as evidências com coordenadas?
+        # 4. A entidade final preserva todas as evidências com coordenadas?
+        resolver = GenericEntityResolver("produto")
+        entidade = resolver.resolve_region(reg)
+        self.assertIsNotNone(entidade)
+        self.assertEqual(len(entidade.evidencias), 2)
+        self.assertIsNotNone(entidade.evidencias[0].bbox)
+
+    def test_09_multiniche_restaurant_bare_price(self):
+        """Testa preservação de preço bare-number em restaurante sem símbolo monetário."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("PRATO EXECUTIVO FILÉ", BoundingBox(100, 100, 400, 130), id_token=1),
+            SpatialToken("59,90", BoundingBox(100, 140, 200, 170), id_token=2),
+        ]
+        doc = RawSpatialDocument("doc_restaurante", "cardapio", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 59.90)
+        self.assertEqual(ancoras[0].evidence_kind, AnchorEvidenceKind.BARE_DECIMAL)
+
+        regioes = clusterizar_espacialmente(doc, ancoras)
+        resolver = GenericEntityResolver("item_cardapio")
+        res = resolver.resolve_all(regioes)
+        self.assertEqual(len(res.entidades), 1)
+        self.assertEqual(res.entidades[0].valor, 59.90)
+
+    def test_10_multiniche_clinic_sessions_and_price(self):
+        """Testa clínica médica com especificação de sessões e preço explícito."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("TRATAMENTO FISIOTERAPIA", BoundingBox(100, 100, 450, 130), id_token=1),
+            SpatialToken("10 SESSÕES", BoundingBox(100, 140, 250, 170), id_token=2),
+            SpatialToken("R$ 180,00", BoundingBox(100, 180, 250, 210), id_token=3),
+        ]
+        doc = RawSpatialDocument("doc_clinica", "tabela_precos", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 180.0)
+        self.assertEqual(ancoras[0].evidence_kind, AnchorEvidenceKind.EXPLICIT_CURRENCY)
+
+        regioes = clusterizar_espacialmente(doc, ancoras)
+        resolver = GenericEntityResolver("procedimento_clinico")
+        res = resolver.resolve_all(regioes)
+        self.assertEqual(len(res.entidades), 1)
+        self.assertEqual(res.entidades[0].valor, 180.0)
+
+    def test_11_multiniche_hotel_daily_package(self):
+        """Testa hotelaria com diárias e preço explícito."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("SUÍTE LUXO CASAL", BoundingBox(100, 100, 350, 130), id_token=1),
+            SpatialToken("2 DIÁRIAS", BoundingBox(100, 140, 220, 170), id_token=2),
+            SpatialToken("R$ 350,00", BoundingBox(100, 180, 240, 210), id_token=3),
+        ]
+        doc = RawSpatialDocument("doc_hotel", "tarifario", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 350.0)
+
+    def test_12_multiniche_saas_monthly_cadence(self):
+        """Testa SaaS com planos recorrentes e cadência mensal."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("PLANO ENTERPRISE", BoundingBox(100, 100, 350, 130), id_token=1),
+            SpatialToken("ATÉ 10 USUÁRIOS", BoundingBox(100, 140, 300, 170), id_token=2),
+            SpatialToken("99,90/MÊS", BoundingBox(100, 180, 250, 210), id_token=3),
+        ]
+        doc = RawSpatialDocument("doc_saas", "pricing_page", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 99.90)
+        self.assertEqual(ancoras[0].evidence_kind, AnchorEvidenceKind.CADENCE_PRICE)
+
+    def test_13_multiniche_numeric_coincidence_preservation(self):
+        """Testa proteção anti-falso-negativo: número de especificação numericamente igual ao preço."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("PACOTE FISIOTERAPIA", BoundingBox(100, 100, 350, 130), id_token=1),
+            SpatialToken("10 SESSÕES", BoundingBox(100, 140, 250, 170), id_token=2),
+            SpatialToken("10,00", BoundingBox(100, 180, 200, 210), id_token=3),
+        ]
+        doc = RawSpatialDocument("doc_coincidencia", "tabela", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 10.0)
+        # O preço de 10.00 DEVE ser preservado pois é a única âncora econômica da oferta
+        regioes = clusterizar_espacialmente(doc, ancoras)
+        resolver = GenericEntityResolver("oferta")
+        res = resolver.resolve_all(regioes)
+        self.assertEqual(len(res.entidades), 1)
+        self.assertEqual(res.entidades[0].valor, 10.0)
+
+    def test_14_multiniche_b2b_year_and_price(self):
+        """Testa serviços B2B com ano fiscal e valor de contrato."""
+        dim = (1000.0, 1000.0)
+        tokens = [
+            SpatialToken("PROPOSTA COMERCIAL 2026", BoundingBox(100, 100, 450, 130), id_token=1),
+            SpatialToken("R$ 5.000,00", BoundingBox(100, 180, 250, 210), id_token=2),
+        ]
+        doc = RawSpatialDocument("doc_b2b", "proposta", dim, tokens)
+        detector = CandidateDetector([StrictCurrencyRule()])
+        ancoras = detector.detect_anchors(doc)
+        # Apenas 5.000,00 vira âncora; o ano 2026 não vira preço
+        self.assertEqual(len(ancoras), 1)
+        self.assertEqual(ancoras[0].valor_normalizado, 5000.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
