@@ -71,8 +71,9 @@ def clusterizar_espacialmente(
     # -------------------------------------------------------------
     # CASO B: Documento Espacial 2D com Geometria
     # -------------------------------------------------------------
-    max_dx_px = max_distancia_horizontal_rel * largura_doc
+    max_dx_padrao_px = max_distancia_horizontal_rel * largura_doc
     max_dy_px = max_distancia_vertical_rel * altura_doc
+    max_dx_linha_px = 0.88 * largura_doc
 
     regioes: List[EvidenceRegion] = [
         EvidenceRegion(
@@ -107,8 +108,17 @@ def clusterizar_espacialmente(
             dx = abs(token.bbox.centro_x - ancora_box.centro_x)
             dy = abs(token.bbox.centro_y - ancora_box.centro_y)
 
+            # Verificação de mesma linha (sobreposição vertical positiva ou dy compatível com altura da linha)
+            y_overlap = max(0.0, min(token.bbox.y_max, ancora_box.y_max) - max(token.bbox.y_min, ancora_box.y_min))
+            altura_linha_ref = max(token.bbox.altura, ancora_box.altura, 0.015 * altura_doc)
+            is_same_line = (y_overlap > 0.0) or (dy <= altura_linha_ref * 0.8)
+
+            # Tolerância horizontal adaptativa à linha (em leitura ocidental, descrições tabulares precedem o preço à esquerda)
+            is_preceding_left = (token.bbox.centro_x <= ancora_box.centro_x + 20.0)
+            max_dx_permitido = max_dx_linha_px if (is_same_line and is_preceding_left) else max_dx_padrao_px
+
             # Verificação de limites máximos
-            if dx > max_dx_px or dy > max_dy_px:
+            if dx > max_dx_permitido or dy > max_dy_px:
                 reg.tokens_rejeitados.append({
                     "token_id": token.id_token,
                     "texto": token.texto,
@@ -116,9 +126,39 @@ def clusterizar_espacialmente(
                 })
                 continue
 
-            # Favorece fortemente tokens na mesma coluna (dx ponderado) e acima/no nível da âncora
-            fator_vertical = 1.0 if token.bbox.centro_y <= ancora_box.centro_y else 2.0
-            dist_ponderada = math.hypot(dx * 1.6, dy * fator_vertical)
+            # Verificação de âncora intermediária bloqueante na mesma linha
+            if is_same_line and dx > max_dx_padrao_px:
+                x_min_seg = min(token.bbox.centro_x, ancora_box.centro_x)
+                x_max_seg = max(token.bbox.centro_x, ancora_box.centro_x)
+                tem_ancora_intermediaria = False
+                for outra_reg in regioes:
+                    if outra_reg is reg:
+                        continue
+                    outra_ancora = outra_reg.ancora
+                    if not outra_ancora or not outra_ancora.bbox:
+                        continue
+                    o_box = outra_ancora.bbox
+                    o_y_overlap = max(0.0, min(token.bbox.y_max, o_box.y_max) - max(token.bbox.y_min, o_box.y_min))
+                    o_is_same_line = (o_y_overlap > 0.0) or (abs(token.bbox.centro_y - o_box.centro_y) <= altura_linha_ref * 0.8)
+                    if o_is_same_line and (x_min_seg + 10.0 < o_box.centro_x < x_max_seg - 10.0):
+                        tem_ancora_intermediaria = True
+                        break
+                if tem_ancora_intermediaria:
+                    reg.tokens_rejeitados.append({
+                        "token_id": token.id_token,
+                        "texto": token.texto,
+                        "motivo": "ancora_intermediaria_bloqueante"
+                    })
+                    continue
+
+            # Cálculo da distância ponderada
+            if is_same_line and is_preceding_left:
+                dist_ponderada = math.hypot(dx * 0.45, dy * 3.0)
+            elif is_same_line:
+                dist_ponderada = math.hypot(dx * 1.8, dy * 2.0)
+            else:
+                fator_vertical = 1.0 if token.bbox.centro_y <= ancora_box.centro_y else 2.0
+                dist_ponderada = math.hypot(dx * 1.6, dy * fator_vertical)
 
             if dist_ponderada < menor_distancia:
                 menor_distancia = dist_ponderada

@@ -1049,6 +1049,148 @@ class TestGeneralization(unittest.TestCase):
         self.assertEqual(items[0].old_price, 79.90)
         self.assertTrue(items[0].promotion)
 
+    def test_27_p2_1_adaptive_line_clustering_and_tables(self):
+        """Fase 17 (P2.1): Validação abrangente de clustering adaptativo para estruturas tabulares, linhas e isolamento."""
+        from pathlib import Path
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument
+        from extractors.adapters import GeneralSpatialAdapter, FlyerProductAdapter
+        from extractors.bridge import carregar_ocr_bruto
+
+        dim = (2000.0, 1000.0)
+        ad = GeneralSpatialAdapter()
+
+        # 1. Tabela horizontal com 3 produtos (Produto A, B, C)
+        doc1 = RawSpatialDocument("doc1", "test", dim, [
+            SpatialToken("Produto Alfa Especial", BoundingBox(100.0, 100.0, 500.0, 140.0), 0.99, 1),
+            SpatialToken("R$ 59,90", BoundingBox(1600.0, 100.0, 1800.0, 140.0), 0.99, 2),
+            SpatialToken("Produto Beta Premium", BoundingBox(100.0, 200.0, 500.0, 240.0), 0.99, 3),
+            SpatialToken("R$ 79,90", BoundingBox(1600.0, 200.0, 1800.0, 240.0), 0.99, 4),
+            SpatialToken("Produto Gama Master", BoundingBox(100.0, 300.0, 500.0, 340.0), 0.99, 5),
+            SpatialToken("R$ 99,90", BoundingBox(1600.0, 300.0, 1800.0, 340.0), 0.99, 6),
+        ])
+        res1 = ad.processar_documento(doc1)
+        self.assertEqual(len(res1.entidades), 3)
+        self.assertIn("ALFA", res1.entidades[0].atributos.get("nome", "").upper())
+        self.assertEqual(res1.entidades[0].valor, 59.90)
+        self.assertIn("BETA", res1.entidades[1].atributos.get("nome", "").upper())
+        self.assertEqual(res1.entidades[1].valor, 79.90)
+        self.assertIn("GAMA", res1.entidades[2].atributos.get("nome", "").upper())
+        self.assertEqual(res1.entidades[2].valor, 99.90)
+
+        # 2. Grande distância horizontal (dx > 0.40 * W) na mesma linha
+        doc2 = RawSpatialDocument("doc2", "test", dim, [
+            SpatialToken("Plano Enterprise Anual", BoundingBox(50.0, 100.0, 350.0, 140.0), 0.99, 1),
+            SpatialToken("R$ 499,00", BoundingBox(1800.0, 100.0, 1950.0, 140.0), 0.99, 2),
+        ])
+        res2 = ad.processar_documento(doc2)
+        self.assertEqual(len(res2.entidades), 1)
+        self.assertIn("ENTERPRISE", res2.entidades[0].atributos.get("nome", "").upper())
+        self.assertEqual(res2.entidades[0].valor, 499.00)
+
+        # 3. Linhas diferentes: descrição de uma linha não associa com preço de outra linha
+        doc3 = RawSpatialDocument("doc3", "test", dim, [
+            SpatialToken("Descrição Linha 1", BoundingBox(100.0, 100.0, 400.0, 130.0), 0.99, 1),
+            SpatialToken("R$ 10,00", BoundingBox(1600.0, 100.0, 1750.0, 130.0), 0.99, 2),
+            SpatialToken("Descrição Linha 2", BoundingBox(100.0, 300.0, 400.0, 330.0), 0.99, 3),
+            SpatialToken("R$ 20,00", BoundingBox(1600.0, 300.0, 1750.0, 330.0), 0.99, 4),
+        ])
+        res3 = ad.processar_documento(doc3)
+        self.assertEqual(len(res3.entidades), 2)
+        self.assertIn("Linha 1", res3.entidades[0].atributos.get("nome", ""))
+        self.assertIn("Linha 2", res3.entidades[1].atributos.get("nome", ""))
+
+        # 4. Cards vizinhos independentes
+        doc4 = RawSpatialDocument("doc4", "test", dim, [
+            SpatialToken("Produto Card A", BoundingBox(100.0, 100.0, 300.0, 130.0), 0.99, 1),
+            SpatialToken("R$ 100,00", BoundingBox(100.0, 140.0, 200.0, 170.0), 0.99, 2),
+            SpatialToken("Produto Card B", BoundingBox(600.0, 100.0, 800.0, 130.0), 0.99, 3),
+            SpatialToken("R$ 50,00", BoundingBox(600.0, 140.0, 700.0, 170.0), 0.99, 4),
+        ])
+        res4 = ad.processar_documento(doc4)
+        self.assertEqual(len(res4.entidades), 2)
+        self.assertIn("CARD A", res4.entidades[0].atributos.get("nome", "").upper())
+        self.assertEqual(res4.entidades[0].valor, 100.00)
+        self.assertIn("CARD B", res4.entidades[1].atributos.get("nome", "").upper())
+        self.assertEqual(res4.entidades[1].valor, 50.00)
+
+        # 5. Múltiplas âncoras na mesma linha (não atravessa âncora intermediária)
+        doc5 = RawSpatialDocument("doc5", "test", dim, [
+            SpatialToken("Item 1", BoundingBox(50.0, 100.0, 200.0, 130.0), 0.99, 1),
+            SpatialToken("R$ 10,00", BoundingBox(250.0, 100.0, 350.0, 130.0), 0.99, 2),
+            SpatialToken("Item 2", BoundingBox(600.0, 100.0, 750.0, 130.0), 0.99, 3),
+            SpatialToken("R$ 20,00", BoundingBox(800.0, 100.0, 900.0, 130.0), 0.99, 4),
+        ])
+        res5 = ad.processar_documento(doc5)
+        self.assertEqual(len(res5.entidades), 2)
+        self.assertIn("Item 1", res5.entidades[0].atributos.get("nome", ""))
+        self.assertEqual(res5.entidades[0].valor, 10.00)
+        self.assertIn("Item 2", res5.entidades[1].atributos.get("nome", ""))
+        self.assertEqual(res5.entidades[1].valor, 20.00)
+
+        # 6. OCR fragmentado na tabela
+        doc6 = RawSpatialDocument("doc6", "test", dim, [
+            SpatialToken("Prato Especial", BoundingBox(100.0, 100.0, 250.0, 130.0), 0.99, 1),
+            SpatialToken("do Chef", BoundingBox(260.0, 100.0, 380.0, 130.0), 0.99, 2),
+            SpatialToken("R$ 85,00", BoundingBox(1600.0, 100.0, 1750.0, 130.0), 0.99, 3),
+        ])
+        res6 = ad.processar_documento(doc6)
+        self.assertEqual(len(res6.entidades), 1)
+        self.assertIn("Prato Especial", res6.entidades[0].atributos.get("nome", ""))
+        self.assertIn("do Chef", res6.entidades[0].atributos.get("nome", ""))
+        self.assertEqual(res6.entidades[0].valor, 85.00)
+
+        # 7. Invariância geométrica de escala
+        for escala in [0.5, 1.0, 2.0, 4.0]:
+            tokens_s = [
+                SpatialToken(t.texto, BoundingBox(t.bbox.x_min * escala, t.bbox.y_min * escala, t.bbox.x_max * escala, t.bbox.y_max * escala), t.confianca, t.id_token)
+                for t in doc1.tokens
+            ]
+            doc_s = RawSpatialDocument("doc_s", "test", (dim[0] * escala, dim[1] * escala), tokens_s)
+            res_s = ad.processar_documento(doc_s)
+            self.assertEqual(len(res_s.entidades), 3, f"Falha na escala {escala}")
+
+        # 8. Regressão Caso 1 Real (162,49 eliminado vs 20,79 preço vigente)
+        ad_flyer = FlyerProductAdapter()
+        path_c1 = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49464_pagina_1.json")
+        if path_c1.exists():
+            doc_c1 = carregar_ocr_bruto(path_c1)
+            res_c1 = ad_flyer.processar_documento(doc_c1)
+            precos_c1 = [e.valor for e in res_c1.entidades]
+            self.assertIn(20.79, precos_c1)
+            self.assertNotIn(162.49, precos_c1)
+
+        # 9. Regressão Fase 16 (De/Por + old_price)
+        doc_depor = RawSpatialDocument("doc_dp", "test", dim, [
+            SpatialToken("PRODUTO PROMO", BoundingBox(100.0, 200.0, 400.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 79,90", BoundingBox(100.0, 270.0, 250.0, 295.0), 0.99, 3),
+        ])
+        res_dp = ad.processar_documento(doc_depor)
+        self.assertEqual(len(res_dp.entidades), 1)
+        self.assertEqual(res_dp.entidades[0].valor, 79.90)
+        self.assertEqual(res_dp.entidades[0].old_price, 100.00)
+        self.assertTrue(res_dp.entidades[0].atributos.get("promocao"))
+
+        # 10. Isolamento de cards De/Por vizinhos
+        doc_viz_dp = RawSpatialDocument("doc_vdp", "test", dim, [
+            # Card A
+            SpatialToken("CARD A", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+            SpatialToken("De R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.99, 2),
+            SpatialToken("Por R$ 80,00", BoundingBox(100.0, 270.0, 250.0, 295.0), 0.99, 3),
+            # Card B
+            SpatialToken("CARD B", BoundingBox(600.0, 200.0, 850.0, 230.0), 0.99, 4),
+            SpatialToken("De R$ 200,00", BoundingBox(600.0, 240.0, 750.0, 265.0), 0.99, 5),
+            SpatialToken("Por R$ 150,00", BoundingBox(600.0, 270.0, 750.0, 295.0), 0.99, 6),
+        ])
+        res_vdp = ad.processar_documento(doc_viz_dp)
+        self.assertEqual(len(res_vdp.entidades), 2)
+        ea = next(e for e in res_vdp.entidades if "CARD A" in e.atributos.get("nome", "").upper())
+        eb = next(e for e in res_vdp.entidades if "CARD B" in e.atributos.get("nome", "").upper())
+        self.assertEqual(ea.valor, 80.00)
+        self.assertEqual(ea.old_price, 100.00)
+        self.assertEqual(eb.valor, 150.00)
+        self.assertEqual(eb.old_price, 200.00)
+
 
 if __name__ == "__main__":
     unittest.main()
