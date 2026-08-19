@@ -37,7 +37,7 @@ class StrictCurrencyRule(CandidateRule):
 
         self._re_simbolo_moeda = re.compile(r'(?:R\$|\$|€|£|US\$)', re.IGNORECASE)
         self._re_cadencia = re.compile(
-            r'(?:/(?:m[eê]s|ano|dia|di[aá]ria|sess[aã]o|hora|un|unidade|kg|g|l|litro|pe[cç]a|item|m[23]|km|pax|noite)|'
+            r'(?:/\s*(?:m[eê]s|ano|dia|di[aá]ria|sess[aã]o|hora|un|unidade|kg|g|l|litro|pe[cç]a|item|m[23]|km|pax|noite)|'
             r'(?:\s+(?:por|ao|a cada|cada)\s+(?:m[eê]s|ano|dia|di[aá]ria|sess[aã]o|hora|un|unidade|kg|g|l|litro|pe[cç]a|item|m[23]|km|pax|noite))|'
             r'\s+CADA|\s+POR\s+M[EÊ]S|\s+MENSAL|\s+ANUAL|\s+DI[AÁ]RIO|\s+POR\s+DIA)',
             re.IGNORECASE
@@ -52,7 +52,7 @@ class StrictCurrencyRule(CandidateRule):
         )
         self._re_nao_moeda = re.compile(r'(%|\d+-\d+|\.\d{4,}|\b\d{1,2}/\d{1,2}/\d{2,4}\b)')
         self._re_preco_padrao = re.compile(
-            r'(?:R\$\s*|\$\s*|€\s*|£\s*|US\$\s*)?(\b(?:\d{1,3}(?:\.\d{3})+,\d{2}|\d{1,5}[.,]\d{2})\b)(?:[^\w\s]?(?:m[eê]s|ano|dia|di[aá]ria|sess[aã]o|hora|un|unidade|kg|g|l|litro|pe[cç]a|item|m[23]|km|pax|noite)|\s+CADA|\s+KG|\s+UN)?',
+            r'(?:R\$\s*|\$\s*|€\s*|£\s*|US\$\s*)?(\b(?:\d{1,3}(?:\.\d{3})+,\d{2}|\d{1,5}[.,]\d{2})\b)(?:[^\w\s]*\s*(?:m[eê]s|ano|dia|di[aá]ria|sess[aã]o|hora|un|unidade|kg|g|l|litro|pe[cç]a|item|m[23]|km|pax|noite)|\s+CADA|\s+KG|\s+UN)?',
             re.IGNORECASE
         )
 
@@ -62,6 +62,15 @@ class StrictCurrencyRule(CandidateRule):
 
     def detect(self, tokens: Sequence[SpatialToken], document: RawSpatialDocument) -> List[CandidateAnchor]:
         ancoras: List[CandidateAnchor] = []
+
+        w_doc, h_doc = document.dimensoes if document and document.dimensoes else (2000.0, 3000.0)
+        if w_doc <= 1.0:
+            w_doc = 2000.0
+        if h_doc <= 1.0:
+            h_doc = 3000.0
+
+        dist_max_px = 0.060 * w_doc
+        dy_max_px = 0.015 * h_doc
 
         for idx, token in enumerate(tokens):
             texto = token.texto.strip()
@@ -83,7 +92,7 @@ class StrictCurrencyRule(CandidateRule):
                         continue
                     v = tokens[v_idx]
                     if v.has_geometry and v.bbox:
-                        if token.bbox.distance_to(v.bbox) <= 120.0 and abs(token.bbox.centro_y - v.bbox.centro_y) <= 40.0:
+                        if token.bbox.distance_to(v.bbox) <= dist_max_px and abs(token.bbox.centro_y - v.bbox.centro_y) <= dy_max_px:
                             vizinhos_a_checar.append(v)
             else:
                 if idx > 0:
@@ -95,7 +104,7 @@ class StrictCurrencyRule(CandidateRule):
                 v_txt = v.texto.strip()
                 dist_ok = True
                 if token.has_geometry and v.has_geometry and token.bbox and v.bbox:
-                    dist_ok = token.bbox.distance_to(v.bbox) <= 120.0
+                    dist_ok = token.bbox.distance_to(v.bbox) <= dist_max_px
 
                 if dist_ok:
                     if not tem_simbolo_moeda and self._re_simbolo_moeda.search(v_txt):
@@ -139,7 +148,7 @@ class StrictCurrencyRule(CandidateRule):
                 proximo_texto = tokens[idx + 1].texto.strip().lower()
                 if proximo_texto in {"g", "kg", "mg", "ml", "l", "litro", "litros", "sachê", "sache", "sachês", "saches", "un", "unidades", "cm", "mm", "%"}:
                     if token.has_geometry and tokens[idx + 1].has_geometry and token.bbox and tokens[idx + 1].bbox:
-                        if token.bbox.distance_to(tokens[idx + 1].bbox) < 120.0:
+                        if token.bbox.distance_to(tokens[idx + 1].bbox) < dist_max_px:
                             tem_sufixo_medida_vizinho = True
                     else:
                         tem_sufixo_medida_vizinho = True
@@ -210,6 +219,7 @@ class LegalProcessRule(CandidateRule):
                     texto_bruto=texto,
                     valor_normalizado=num_proc,
                     unidade="PROCESSO_CNJ",
+                    evidence_kind=AnchorEvidenceKind.TEMPORAL_OR_CODE,
                     confianca=min(1.0, token.confianca + 0.10),
                     token_ref=token,
                     bbox=token.bbox,
@@ -336,6 +346,7 @@ class TaxIdRule(CandidateRule):
                     texto_bruto=texto,
                     valor_normalizado=match_cnpj.group(0),
                     unidade="CNPJ",
+                    evidence_kind=AnchorEvidenceKind.TEMPORAL_OR_CODE,
                     confianca=token.confianca,
                     token_ref=token,
                     bbox=token.bbox,
@@ -350,6 +361,7 @@ class TaxIdRule(CandidateRule):
                     texto_bruto=texto,
                     valor_normalizado=match_cpf.group(0),
                     unidade="CPF",
+                    evidence_kind=AnchorEvidenceKind.TEMPORAL_OR_CODE,
                     confianca=token.confianca,
                     token_ref=token,
                     bbox=token.bbox,
@@ -381,6 +393,7 @@ class DateRule(CandidateRule):
                     texto_bruto=texto,
                     valor_normalizado=match.group(1),
                     unidade="DATE_ISO",
+                    evidence_kind=AnchorEvidenceKind.TEMPORAL_OR_CODE,
                     confianca=token.confianca,
                     token_ref=token,
                     bbox=token.bbox,
@@ -416,6 +429,7 @@ class MeasurementContextRule(CandidateRule):
                     texto_bruto=match.group(1),
                     valor_normalizado=match.group(1),
                     unidade=None,
+                    evidence_kind=AnchorEvidenceKind.SPECIFICATION,
                     confianca=token.confianca,
                     token_ref=token,
                     bbox=token.bbox,

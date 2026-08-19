@@ -9,7 +9,7 @@ Suporta entidades originadas por:
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from extractors.models import (
     EvidenceRegion,
     ExtractedEntity,
@@ -33,7 +33,11 @@ class EntityResolver(ABC):
     def resolve_cluster(self, cluster: EvidenceRegion) -> Optional[ExtractedEntity]:
         return self.resolve_region(cluster)
 
-    def consolidar_concorrencia_entidades(self, entidades: Sequence[ExtractedEntity]) -> List[ExtractedEntity]:
+    def consolidar_concorrencia_entidades(
+        self,
+        entidades: Sequence[ExtractedEntity],
+        dimensoes_pagina: Optional[Tuple[float, float]] = None
+    ) -> List[ExtractedEntity]:
         """
         Consolida concorrência entre entidades da mesma oferta/coluna com base na hierarquia de evidência.
         1. Preços bare-number únicos/isolados são 100% PRESERVADOS.
@@ -44,6 +48,15 @@ class EntityResolver(ABC):
             return list(entidades)
 
         from extractors.models import BoundingBox
+
+        w_doc, h_doc = dimensoes_pagina if dimensoes_pagina else (2000.0, 3000.0)
+        if w_doc <= 1.0:
+            w_doc = 2000.0
+        if h_doc <= 1.0:
+            h_doc = 3000.0
+
+        dist_max_px = 0.10 * w_doc
+        dy_ancoras_max_px = 0.06 * h_doc
 
         subordinadas_indices = set()
         for i, ent_a in enumerate(entidades):
@@ -76,8 +89,8 @@ class EntityResolver(ABC):
                     # 2. Distância vertical entre as ÂNCORAS
                     dy_ancoras = max(0.0, max(box_a.y_min, box_b.y_min) - min(box_a.y_max, box_b.y_max))
 
-                    # 3. Deve estar dentro do mesmo card (dy <= 180px)
-                    if (overlap_x_ratio >= 0.50 or box_a.distance_to(box_b) <= 200.0) and dy_ancoras <= 180.0:
+                    # 3. Deve estar dentro do mesmo card (dy <= dy_ancoras_max_px)
+                    if (overlap_x_ratio >= 0.50 or box_a.distance_to(box_b) <= dist_max_px) and dy_ancoras <= dy_ancoras_max_px:
                         escala_subordinada = (box_a.altura / max(1.0, box_b.altura)) <= 0.50
                         textos_b_str = " ".join(ent_b.atributos.get("textos_detectados", [])).upper()
 
@@ -103,14 +116,22 @@ class EntityResolver(ABC):
 
         return [ent for idx, ent in enumerate(entidades) if idx not in subordinadas_indices]
 
-    def resolve_all(self, regions: Sequence[EvidenceRegion], documento_id: str = "") -> ExtractionResult:
+    def resolve_all(
+        self,
+        regions: Sequence[EvidenceRegion],
+        documento_id: str = "",
+        dimensoes_pagina: Optional[Tuple[float, float]] = None
+    ) -> ExtractionResult:
         entidades: List[ExtractedEntity] = []
         for r in regions:
             ent = self.resolve_region(r)
             if ent is not None:
                 entidades.append(ent)
 
-        entidades_consolidadas = self.consolidar_concorrencia_entidades(entidades)
+        entidades_consolidadas = self.consolidar_concorrencia_entidades(
+            entidades,
+            dimensoes_pagina=dimensoes_pagina
+        )
 
         return ExtractionResult(
             documento_id=documento_id,

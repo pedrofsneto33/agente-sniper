@@ -326,6 +326,186 @@ class TestGeneralization(unittest.TestCase):
         self.assertEqual(len(ancoras), 1)
         self.assertEqual(ancoras[0].valor_normalizado, 5000.0)
 
+    def test_15_multiniche_spaced_cadences(self):
+        """Testa suporte completo a cadências com variações de espaçamento tipográfico."""
+        dim = (1000.0, 1000.0)
+        casos_cadencia = [
+            ("99,90/mês", AnchorEvidenceKind.CADENCE_PRICE, "/mês"),
+            ("99,90 /mês", AnchorEvidenceKind.CADENCE_PRICE, "/mês"),
+            ("99,90/ mês", AnchorEvidenceKind.CADENCE_PRICE, "/ mês"),
+            ("99,90 / mês", AnchorEvidenceKind.CADENCE_PRICE, "/ mês"),
+            ("99,90/ano", AnchorEvidenceKind.CADENCE_PRICE, "/ano"),
+            ("99,90 / ano", AnchorEvidenceKind.CADENCE_PRICE, "/ ano"),
+            ("R$ 99,90 / mês", AnchorEvidenceKind.EXPLICIT_CURRENCY, "/ mês"),
+            ("R$ 99,90 / ano", AnchorEvidenceKind.EXPLICIT_CURRENCY, "/ ano"),
+        ]
+        rule = StrictCurrencyRule()
+        for texto_entrada, kind_esperado, cadencia_esperada in casos_cadencia:
+            with self.subTest(texto=texto_entrada):
+                tok = SpatialToken(texto_entrada, BoundingBox(100, 100, 250, 130), id_token=1)
+                doc = RawSpatialDocument("doc_cad", "teste", dim, [tok])
+                ancoras = rule.detect([tok], doc)
+                self.assertEqual(len(ancoras), 1, f"Falha ao detectar âncora para '{texto_entrada}'")
+                a = ancoras[0]
+                self.assertEqual(a.tipo, "CURRENCY")
+                self.assertEqual(a.valor_normalizado, 99.90)
+                self.assertEqual(a.evidence_kind, kind_esperado)
+                self.assertTrue(a.is_strong_monetary_evidence)
+                self.assertIsNotNone(a.cadencia)
+                self.assertEqual(a.cadencia.lower().replace(" ", ""), cadencia_esperada.lower().replace(" ", ""))
+
+    def test_16_secondary_rules_explicit_evidence_kind(self):
+        """Testa a tipagem semântica explícita de evidence_kind nas regras secundárias."""
+        dim = (1000.0, 1000.0)
+        doc = RawSpatialDocument("doc_sec", "teste", dim, [])
+
+        # 1. LegalProcessRule -> TEMPORAL_OR_CODE
+        t_proc = SpatialToken("0812345-67.2026.8.18.0001", BoundingBox(100, 100, 300, 130), id_token=1)
+        a_proc = LegalProcessRule().detect([t_proc], doc)
+        self.assertEqual(len(a_proc), 1)
+        self.assertEqual(a_proc[0].tipo, "LEGAL_PROCESS")
+        self.assertEqual(a_proc[0].evidence_kind, AnchorEvidenceKind.TEMPORAL_OR_CODE)
+
+        # 2. DateRule -> TEMPORAL_OR_CODE
+        t_date = SpatialToken("19/08/2026", BoundingBox(100, 100, 200, 130), id_token=2)
+        a_date = DateRule().detect([t_date], doc)
+        self.assertEqual(len(a_date), 1)
+        self.assertEqual(a_date[0].tipo, "DATE")
+        self.assertEqual(a_date[0].evidence_kind, AnchorEvidenceKind.TEMPORAL_OR_CODE)
+
+        # 3. TaxIdRule (CNPJ & CPF) -> TEMPORAL_OR_CODE
+        t_cnpj = SpatialToken("12.345.678/0001-90", BoundingBox(100, 100, 250, 130), id_token=3)
+        t_cpf = SpatialToken("123.456.789-00", BoundingBox(100, 100, 200, 130), id_token=4)
+        a_cnpj = TaxIdRule().detect([t_cnpj], doc)
+        a_cpf = TaxIdRule().detect([t_cpf], doc)
+        self.assertEqual(len(a_cnpj), 1)
+        self.assertEqual(a_cnpj[0].evidence_kind, AnchorEvidenceKind.TEMPORAL_OR_CODE)
+        self.assertEqual(len(a_cpf), 1)
+        self.assertEqual(a_cpf[0].evidence_kind, AnchorEvidenceKind.TEMPORAL_OR_CODE)
+
+        # 4. MeasurementContextRule -> SPECIFICATION
+        t_meas = SpatialToken("162,4g", BoundingBox(100, 100, 150, 130), id_token=5)
+        a_meas = MeasurementContextRule().detect([t_meas], doc)
+        self.assertEqual(len(a_meas), 1)
+        self.assertEqual(a_meas[0].tipo, "MEASUREMENT")
+        self.assertEqual(a_meas[0].evidence_kind, AnchorEvidenceKind.SPECIFICATION)
+
+        # 5. PercentageRule -> BARE_DECIMAL (inalterado nesta etapa)
+        t_pct = SpatialToken("15,5%", BoundingBox(100, 100, 150, 130), id_token=6)
+        a_pct = PercentageRule().detect([t_pct], doc)
+        self.assertEqual(len(a_pct), 1)
+        self.assertEqual(a_pct[0].tipo, "PERCENTAGE")
+        self.assertEqual(a_pct[0].evidence_kind, AnchorEvidenceKind.BARE_DECIMAL)
+
+    def test_17_scale_invariance_0_5x_to_4x(self):
+        """Valida formalmente a invariância de escala geométrica (0.5x, 1.0x, 2.0x, 4.0x) nos 10 documentos reais."""
+        from pathlib import Path
+        from extractors.adapters.flyer_product_adapter import FlyerProductAdapter
+        from extractors.bridge import carregar_ocr_bruto
+
+        ocr_dir = Path("dados_browser/ocr_bruto")
+        ocr_files = sorted(list(ocr_dir.glob("*.json")))
+        self.assertEqual(len(ocr_files), 10, "Devem existir exatamente 10 arquivos OCR de teste real.")
+
+        adapter = FlyerProductAdapter()
+        escalas = [0.5, 1.0, 2.0, 4.0]
+        resultados_por_escala = {}
+
+        for escala in escalas:
+            total_itens_escala = 0
+            produtos_escala = []
+
+            for arq in ocr_files:
+                doc_original = carregar_ocr_bruto(arq)
+                w_orig, h_orig = doc_original.dimensoes
+
+                if escala == 1.0:
+                    doc_escalado = doc_original
+                else:
+                    tokens_escalados = [
+                        SpatialToken(
+                            t.texto,
+                            BoundingBox(
+                                t.bbox.x_min * escala,
+                                t.bbox.y_min * escala,
+                                t.bbox.x_max * escala,
+                                t.bbox.y_max * escala,
+                            ) if t.bbox else None,
+                            t.confianca,
+                            t.id_token,
+                            t.metadados
+                        )
+                        for t in doc_original.tokens
+                    ]
+                    doc_escalado = RawSpatialDocument(
+                        identificador=doc_original.identificador,
+                        origem=doc_original.origem,
+                        dimensoes=(w_orig * escala, h_orig * escala),
+                        tokens=tokens_escalados,
+                        metadados=doc_original.metadados
+                    )
+
+                resultado = adapter.processar_documento(doc_escalado)
+                total_itens_escala += len(resultado.entidades)
+                for ent in resultado.entidades:
+                    produtos_escala.append((
+                        doc_original.identificador,
+                        ent.atributos.get("nome"),
+                        ent.valor
+                    ))
+
+            self.assertEqual(
+                total_itens_escala,
+                63,
+                f"Escala {escala}x produziu {total_itens_escala} itens em vez dos 63 canônicos."
+            )
+            resultados_por_escala[escala] = produtos_escala
+
+        # Valida invariância semântica e de conteúdo entre 1.0x e todas as demais escalas
+        base_1x = resultados_por_escala[1.0]
+        for escala in [0.5, 2.0, 4.0]:
+            self.assertEqual(
+                len(resultados_por_escala[escala]),
+                len(base_1x),
+                f"Quantidade divergente na escala {escala}x"
+            )
+            for idx, (p_esc, p_base) in enumerate(zip(resultados_por_escala[escala], base_1x)):
+                self.assertEqual(
+                    p_esc[0], p_base[0],
+                    f"Documento divergente no item {idx} na escala {escala}x"
+                )
+                self.assertEqual(
+                    p_esc[1], p_base[1],
+                    f"Nome de produto divergente no item {idx} na escala {escala}x: '{p_esc[1]}' != '{p_base[1]}'"
+                )
+                self.assertEqual(
+                    p_esc[2], p_base[2],
+                    f"Valor divergente no item {idx} na escala {escala}x: {p_esc[2]} != {p_base[2]}"
+                )
+
+    def test_18_case1_dual_anchor_resolution(self):
+        """Testa diretamente o Caso 1: falsa âncora 162,49 gerada de 162,4g subordinada à âncora real R$ 20,79 CADA."""
+        from extractors.adapters.flyer_product_adapter import FlyerProductAdapter
+
+        dim = (2000.0, 3000.0)
+        tokens = [
+            SpatialToken("162,49", BoundingBox(1931.0, 1840.0, 1973.0, 1857.0), id_token=1),
+            SpatialToken("CAPPUCCINO PREMIUM", BoundingBox(1794.0, 1875.0, 2077.0, 1904.0), id_token=2),
+            SpatialToken("CAIXETA 156,8G OU 162,4G", BoundingBox(1794.0, 1930.0, 2047.0, 1956.0), id_token=3),
+            SpatialToken("R$ 20,79 CADA", BoundingBox(1829.0, 1952.0, 2014.0, 2026.0), id_token=4),
+        ]
+        doc = RawSpatialDocument("doc_caso1", "flyer", dim, tokens)
+        adapter = FlyerProductAdapter()
+        resultado = adapter.processar_documento(doc)
+
+        self.assertEqual(len(resultado.entidades), 1, "Deveria haver exatamente 1 entidade consolidada (oferta dominante).")
+        ent = resultado.entidades[0]
+        self.assertEqual(ent.valor, 20.79, "O valor final da oferta deve ser 20.79 (âncora forte dominante).")
+        self.assertIn("CAPPUCCINO PREMIUM", ent.atributos.get("nome", "").upper())
+        self.assertEqual(len(ent.ancoras), 1, "A entidade dominante possui a âncora principal ativa.")
+        self.assertEqual(ent.ancoras[0].valor_normalizado, 20.79)
+        self.assertTrue(len(ent.evidencias) >= 2, "A entidade dominante deve incorporar as evidências da região subordinada.")
+
 
 if __name__ == "__main__":
     unittest.main()

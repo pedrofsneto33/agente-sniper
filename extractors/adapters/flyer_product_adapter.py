@@ -222,7 +222,11 @@ class FlyerProductAdapter:
         )
 
         # 4. Resolução de entidades estruturadas
-        resultado = self.resolver.resolve_all(regioes, documento_id=documento_bruto.identificador)
+        resultado = self.resolver.resolve_all(
+            regioes,
+            documento_id=documento_bruto.identificador,
+            dimensoes_pagina=doc_normalizado.dimensoes
+        )
         resultado.metricas.update({
             "tokens_originais": len(documento_bruto.tokens),
             "tokens_apos_filtro": len(doc_normalizado.tokens),
