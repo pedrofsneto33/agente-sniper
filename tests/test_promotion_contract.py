@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Testes de Contrato de Promoção e Integração Downstream — Fase 6A
 Valida que PriceItems gerados pelo GENERIC atendem rigorosamente todos os 17 campos do domínio,
@@ -30,9 +30,9 @@ class TestPromotionContract(unittest.TestCase):
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
-        res = executar_pipeline_extracao(caminho_ocr, engine="generic")
+        res = executar_pipeline_extracao(caminho_ocr, engine="flyer")
         items = res["price_items"]
-        self.assertGreater(len(items), 0)
+        self.assertEqual(len(items), 7)
 
         for it in items:
             self.assertIsInstance(it.source, str)

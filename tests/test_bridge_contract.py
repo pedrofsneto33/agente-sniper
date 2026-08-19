@@ -62,15 +62,22 @@ class TestBridgeContract(unittest.TestCase):
         self.assertEqual(res_legacy["documento_id"], "49738-102_pagina_1")
         self.assertGreater(len(res_legacy["price_items"]), 0)
 
-        # 2. Execução no modo GENERIC
+        # 2. Execução no modo GENERIC (desacoplado sem zonas fixas de encarte)
         res_generic = executar_pipeline_extracao(caminho_ocr, engine="generic")
         self.assertEqual(res_generic["engine"], "generic")
         self.assertEqual(res_generic["documento_id"], "49738-102_pagina_1")
-        self.assertEqual(len(res_generic["price_items"]), 7)
+        self.assertGreaterEqual(len(res_generic["price_items"]), 7)
 
-        # O modo generic deve ter suprimido o falso preço de 162.40 (162,4g)
+        # 3. Execução no modo FLYER (especialização com exclusão de cabeçalho/rodapé de tablóide)
+        res_flyer = executar_pipeline_extracao(caminho_ocr, engine="flyer")
+        self.assertEqual(res_flyer["engine"], "flyer")
+        self.assertEqual(len(res_flyer["price_items"]), 7)
+
+        # Ambos os modos suprimem o falso preço de 162.40 (162,4g)
         precos_generic = [p.price for p in res_generic["price_items"]]
         self.assertNotIn(162.40, precos_generic)
+        precos_flyer = [p.price for p in res_flyer["price_items"]]
+        self.assertNotIn(162.40, precos_flyer)
 
     def test_04_adapter_compatibilidade_reversa_cards(self):
         """Valida que converter_para_schema_legacy_cards produz o formato compatível com cards_candidatos_v2."""
@@ -78,8 +85,8 @@ class TestBridgeContract(unittest.TestCase):
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
-        res_generic = executar_pipeline_extracao(caminho_ocr, engine="generic")
-        schema_cards = converter_para_schema_legacy_cards(res_generic["resultado_canonico"])
+        res_flyer = executar_pipeline_extracao(caminho_ocr, engine="flyer")
+        schema_cards = converter_para_schema_legacy_cards(res_flyer["resultado_canonico"])
 
         self.assertIn("arquivo", schema_cards)
         self.assertIn("total_cards", schema_cards)

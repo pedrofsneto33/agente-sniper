@@ -18,7 +18,7 @@ from extractors.models import (
     ExtractedEntity,
     ExtractionResult,
 )
-from extractors.adapters.flyer_product_adapter import FlyerProductAdapter
+from extractors.adapters import GeneralSpatialAdapter, FlyerProductAdapter
 from domain.models import PriceItem
 
 
@@ -166,7 +166,8 @@ def executar_pipeline_extracao(
     engine: Optional[str] = None,
     source: str = "Assai",
     role: str = "competitor",
-    page_url: str = ""
+    page_url: str = "",
+    adapter: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Ponto de Entrada Unificado da Ponte: Executa o extrator de acordo com a feature flag.
@@ -175,9 +176,15 @@ def executar_pipeline_extracao(
     motor_escolhido = (engine or obter_engine_ativo()).strip().lower()
     doc_espacial = carregar_ocr_bruto(origem_ocr)
 
-    if motor_escolhido == "generic":
-        adapter = FlyerProductAdapter()
-        resultado = adapter.processar_documento(doc_espacial)
+    if motor_escolhido in {"generic", "general", "flyer"}:
+        if adapter is not None:
+            active_adapter = adapter
+        elif motor_escolhido == "flyer":
+            active_adapter = FlyerProductAdapter()
+        else:
+            active_adapter = GeneralSpatialAdapter()
+
+        resultado = active_adapter.processar_documento(doc_espacial)
         price_items = converter_entidades_para_price_items(
             resultado.entidades,
             source=source,
@@ -186,7 +193,7 @@ def executar_pipeline_extracao(
             location_note="extractors_generic"
         )
         return {
-            "engine": "generic",
+            "engine": motor_escolhido,
             "documento_id": doc_espacial.identificador,
             "price_items": price_items,
             "resultado_canonico": resultado,

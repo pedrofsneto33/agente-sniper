@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Promotion Gate Determinístico do Motor GENERIC — Fase 6D
 Avalia rigorosamente se o motor GENERIC cumpre todos os 12 critérios técnicos (G1 a G12)
@@ -134,13 +134,17 @@ class PromotionGate:
         min_documents_threshold: int = 10,
         max_p99_latency_ms: float = 100.0,
         min_matching_rate: float = 0.95,
-        max_unresolved_rate: float = 0.05
+        max_unresolved_rate: float = 0.05,
+        engine: str = "flyer",
+        adapter: Optional[Any] = None
     ):
         self.db_path = db_path or Path(r"C:\Users\User\Desktop\Agente sniper\sniper_resultados\sniper_historico.sqlite3")
         self.min_documents_threshold = min_documents_threshold
         self.max_p99_latency_ms = max_p99_latency_ms
         self.min_matching_rate = min_matching_rate
         self.max_unresolved_rate = max_unresolved_rate
+        self.engine = engine
+        self.adapter = adapter
 
     def evaluate(self, ocr_files: Sequence[Path], run_id: Optional[str] = None) -> PromotionGateResult:
         run_id = run_id or f"gate_run_{int(time.time())}"
@@ -178,9 +182,9 @@ class PromotionGate:
                 t_leg = (time.perf_counter() - t0) * 1000
                 tempos_legacy.append(t_leg)
 
-                # Execução Generic
+                # Execução Generic / Flyer
                 t0 = time.perf_counter()
-                res_gen = executar_pipeline_extracao(arq, engine="generic")
+                res_gen = executar_pipeline_extracao(arq, engine=self.engine, adapter=self.adapter)
                 t_gen = (time.perf_counter() - t0) * 1000
                 tempos_generic.append(t_gen)
 
@@ -239,8 +243,8 @@ class PromotionGate:
         if ocr_files:
             try:
                 amostra = ocr_files[0]
-                run_a = json.dumps([p.__dict__ for p in executar_pipeline_extracao(amostra, engine="generic")["price_items"]], sort_keys=True)
-                run_b = json.dumps([p.__dict__ for p in executar_pipeline_extracao(amostra, engine="generic")["price_items"]], sort_keys=True)
+                run_a = json.dumps([p.__dict__ for p in executar_pipeline_extracao(amostra, engine=self.engine, adapter=self.adapter)["price_items"]], sort_keys=True)
+                run_b = json.dumps([p.__dict__ for p in executar_pipeline_extracao(amostra, engine=self.engine, adapter=self.adapter)["price_items"]], sort_keys=True)
                 idempotency_pass = (run_a == run_b)
             except Exception:
                 idempotency_pass = False

@@ -22,6 +22,35 @@ from extractors.clustering import clusterizar_espacialmente
 from extractors.entity_resolver import EntityResolver
 
 
+_RE_RUIDO_ISOLADO = re.compile(
+    r'^(?:r\$|cada|un|und|unid|cx|pct|kg|g|mg|ml|l|lt|de|por|em|no|na|do|da|dos|das|para|com|sem|e|ou|um|uma|compre|leve|pague)$',
+    re.IGNORECASE
+)
+_RE_DATA_PERCENT_PADRAO = re.compile(
+    r'^(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?|\d+(?:[.,]\d+)?%|\d{2,3}\.\d{3}\.\d{3}[/-]\d{2,4}|(?:\(?\d{2}\)?\s*)?\d{4,5}-?\d{4})$'
+)
+_RE_NUMERO_PURO = re.compile(r'^\d+(?:[.,]\d+)?$')
+_RE_PALAVRA_VALIDA = re.compile(r'[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]{2,}')
+
+
+def _is_valid_candidate_text(texto: str) -> bool:
+    """Valida se uma string é um candidato textual legítimo para nome/descrição de entidade."""
+    s = texto.strip()
+    if len(s) < 2:
+        return False
+    if not any(c.isalnum() for c in s):
+        return False
+    if _RE_NUMERO_PURO.match(s):
+        return False
+    if _RE_DATA_PERCENT_PADRAO.match(s):
+        return False
+    if _RE_RUIDO_ISOLADO.match(s):
+        return False
+    if not _RE_PALAVRA_VALIDA.search(s):
+        return False
+    return True
+
+
 class FlyerProductResolver(EntityResolver):
     """Resolvedor especializado para produtos de varejo em encartes."""
 
@@ -123,14 +152,15 @@ class FlyerProductResolver(EntityResolver):
             if match_emb:
                 embalagens_encontradas.append(t_str)
 
-            textos_filtrados.append(t_str)
-            evidencias.append(EvidenceItem(
-                tipo="texto_produto",
-                texto_bruto=t_str,
-                confianca=t.confianca,
-                bbox=t.bbox,
-                token_id=t.id_token
-            ))
+            if _is_valid_candidate_text(t_str):
+                textos_filtrados.append(t_str)
+                evidencias.append(EvidenceItem(
+                    tipo="texto_produto",
+                    texto_bruto=t_str,
+                    confianca=t.confianca,
+                    bbox=t.bbox,
+                    token_id=t.id_token
+                ))
 
         # 2. Heurística determinística de nome de produto:
         # Ordena por proximidade vertical em relação à âncora de preço
@@ -153,7 +183,7 @@ class FlyerProductResolver(EntityResolver):
                 and not self._re_condicao_comercial.match(normalizar_espacos(t.texto))
             ]
 
-        linhas_candidatas = [t.texto.strip() for t in tokens_proximos if len(t.texto.strip()) >= 5]
+        linhas_candidatas = [t.texto.strip() for t in tokens_proximos if _is_valid_candidate_text(t.texto)]
         nome_candidato = " ".join(linhas_candidatas[:2]) if linhas_candidatas else " ".join(textos_filtrados[:2])
         nome_limpo = normalizar_espacos(nome_candidato) if (linhas_candidatas or textos_filtrados) else ancora.texto_bruto
 
@@ -188,10 +218,13 @@ class FlyerProductResolver(EntityResolver):
         )
 
 
-class FlyerProductAdapter:
+from extractors.adapters.general_spatial_adapter import GeneralSpatialAdapter
+
+
+class FlyerProductAdapter(GeneralSpatialAdapter):
     """
     Fachada especializada do adaptador de encartes de supermercado/varejo.
-    Conecta as fases de normalização, detecção de candidatos, clustering e montagem de entidades.
+    Especializa o GeneralSpatialAdapter com zonas de exclusão de cabeçalho e rodapé de tablóides.
     """
 
     def __init__(
@@ -202,9 +235,7 @@ class FlyerProductAdapter:
         max_preco: float = 999999.0,
         fundir_fragmentos_ocr: bool = False
     ):
-        self.fundir_fragmentos_ocr = fundir_fragmentos_ocr
-        # Zonas de exclusão canônicas para tablóides e folhetos
-        self.zonas_exclusao = [
+        zonas = [
             ExclusionZone(
                 nome="banner_topo_cabecalho",
                 relative_bbox=BoundingBox(x_min=0.0, y_min=0.0, x_max=1.0, y_max=topo_exclusao_rel)
@@ -214,43 +245,10 @@ class FlyerProductAdapter:
                 relative_bbox=BoundingBox(x_min=0.0, y_min=rodape_exclusao_rel, x_max=1.0, y_max=1.0)
             )
         ]
-        self.detector = CandidateDetector(rules=[
-            StrictCurrencyRule(default_currency="BRL", min_val=min_preco, max_val=max_preco)
-        ])
-        self.resolver = FlyerProductResolver()
-
-    def processar_documento(self, documento_bruto: RawSpatialDocument) -> ExtractionResult:
-        """Executa a esteira completa sobre o documento espacial."""
-        # 1. Normalização e filtragem espacial de zonas de exclusão
-        doc_normalizado = normalizar_documento_espacial(
-            documento_bruto,
-            zonas_exclusao=self.zonas_exclusao,
-            confianca_minima=0.25,
-            fundir_fragmentos=self.fundir_fragmentos_ocr
+        super().__init__(
+            zonas_exclusao=zonas,
+            min_preco=min_preco,
+            max_preco=max_preco,
+            fundir_fragmentos_ocr=fundir_fragmentos_ocr,
+            resolver=FlyerProductResolver()
         )
-
-        # 2. Detecção estrita de âncoras de preço
-        ancoras = self.detector.detect_anchors(doc_normalizado)
-
-        # 3. Agrupamento espacial delimitado (sem regiões infinitas)
-        regioes = clusterizar_espacialmente(
-            documento=doc_normalizado,
-            ancoras=ancoras,
-            max_distancia_horizontal_rel=0.22,
-            max_distancia_vertical_rel=0.40
-        )
-
-        # 4. Resolução de entidades estruturadas
-        resultado = self.resolver.resolve_all(
-            regioes,
-            documento_id=documento_bruto.identificador,
-            dimensoes_pagina=doc_normalizado.dimensoes
-        )
-        resultado.metricas.update({
-            "tokens_originais": len(documento_bruto.tokens),
-            "tokens_apos_filtro": len(doc_normalizado.tokens),
-            "ancoras_detectadas": len(ancoras),
-            "clusters_formados": len(regioes),
-        })
-
-        return resultado

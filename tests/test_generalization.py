@@ -691,6 +691,107 @@ class TestGeneralization(unittest.TestCase):
         for preco_hardcode in ["162.49", "156.80", "162.40"]:
             self.assertNotIn(preco_hardcode, canary_source, f"Preço hardcoded {preco_hardcode} encontrado no módulo canary")
 
+    def test_23_decoupled_general_spatial_adapter_p1_1(self):
+        """P1.1: Valida que GeneralSpatialAdapter é desacoplado de zonas fixas de encarte enquanto FlyerProductAdapter preserva especialização."""
+        from pathlib import Path
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument
+        from extractors.adapters import GeneralSpatialAdapter, FlyerProductAdapter
+        from extractors.bridge import carregar_ocr_bruto, executar_pipeline_extracao
+
+        dim = (1000.0, 1000.0)
+
+        # A. Oferta válida em y < 0.12 (topo da página)
+        doc_topo = RawSpatialDocument("doc_topo", "web", dim, [
+            SpatialToken("SERVIÇO NO TOPO", BoundingBox(100.0, 30.0, 450.0, 70.0), 0.99, 1),
+            SpatialToken("R$ 150,00", BoundingBox(100.0, 80.0, 250.0, 110.0), 0.99, 2),
+        ])
+        gen_ad = GeneralSpatialAdapter()
+        fly_ad = FlyerProductAdapter()
+
+        res_gen_topo = gen_ad.processar_documento(doc_topo)
+        res_fly_topo = fly_ad.processar_documento(doc_topo)
+        self.assertEqual(len(res_gen_topo.entidades), 1, "Generic deve preservar ofertas no topo (y < 0.12)")
+        self.assertEqual(len(res_fly_topo.entidades), 0, "FlyerAdapter deve filtrar cabeçalho de tablóide")
+
+        # B. Oferta válida em y > 0.88 (rodapé da página)
+        doc_rodape = RawSpatialDocument("doc_rodape", "web", dim, [
+            SpatialToken("SERVIÇO NO RODAPÉ", BoundingBox(100.0, 900.0, 450.0, 930.0), 0.99, 1),
+            SpatialToken("R$ 80,00", BoundingBox(100.0, 940.0, 250.0, 970.0), 0.99, 2),
+        ])
+        res_gen_rod = gen_ad.processar_documento(doc_rodape)
+        res_fly_rod = fly_ad.processar_documento(doc_rodape)
+        self.assertEqual(len(res_gen_rod.entidades), 1, "Generic deve preservar ofertas no rodapé (y > 0.88)")
+        self.assertEqual(len(res_fly_rod.entidades), 0, "FlyerAdapter deve filtrar rodapé de tablóide")
+
+        # C. Academia com card no topo
+        doc_acad = RawSpatialDocument("doc_acad_topo", "gym", dim, [
+            SpatialToken("ACADEMIA GOLD", BoundingBox(100.0, 20.0, 400.0, 50.0), 0.99, 1),
+            SpatialToken("MENSALIDADE", BoundingBox(100.0, 55.0, 300.0, 80.0), 0.95, 2),
+            SpatialToken("R$ 129,90", BoundingBox(100.0, 85.0, 250.0, 115.0), 0.99, 3),
+        ])
+        res_acad = gen_ad.processar_documento(doc_acad)
+        self.assertEqual(len(res_acad.entidades), 1)
+        self.assertEqual(res_acad.entidades[0].valor, 129.90)
+        self.assertIn("ACADEMIA GOLD", res_acad.entidades[0].atributos.get("nome"))
+
+        # D. SaaS com card no topo
+        doc_saas = RawSpatialDocument("doc_saas_topo", "saas", dim, [
+            SpatialToken("PLANO STARTER", BoundingBox(100.0, 30.0, 400.0, 60.0), 0.99, 1),
+            SpatialToken("R$ 49,90 / MÊS", BoundingBox(100.0, 65.0, 350.0, 100.0), 0.99, 2),
+        ])
+        res_saas = gen_ad.processar_documento(doc_saas)
+        self.assertEqual(len(res_saas.entidades), 1)
+        self.assertEqual(res_saas.entidades[0].valor, 49.90)
+        self.assertIn("PLANO STARTER", res_saas.entidades[0].atributos.get("nome"))
+
+        # E. Supermercado real via FlyerProductAdapter mantém 63/63 entidades
+        ocr_files = sorted(list(Path(r"dados_browser/ocr_bruto").glob("*.json")))
+        tot_super = sum(len(fly_ad.processar_documento(carregar_ocr_bruto(f)).entidades) for f in ocr_files)
+        self.assertEqual(tot_super, 63, "Supermercado real deve manter estritamente 63 entidades canônicas")
+
+    def test_24_valid_short_word_candidate_filtering_p1_2(self):
+        """P1.2: Valida política genérica de termos curtos válidos (SPA, GYM, BOX, PET, YOGA, PIX) e descarte de ruído."""
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument
+        from extractors.adapters import GeneralSpatialAdapter
+
+        dim = (1000.0, 1000.0)
+        ad = GeneralSpatialAdapter()
+
+        # 1. Termos curtos válidos (SPA, GYM, BOX, PET, YOGA, PIX)
+        short_names = [
+            ("SPA RELAXANTE", 120.0),
+            ("GYM PASS", 89.90),
+            ("BOX CROSSFIT", 150.0),
+            ("PET BANHO E TOSA", 65.0),
+            ("YOGA MATINAL", 90.0),
+            ("PIX DESCONTO", 45.0),
+        ]
+        for name, price in short_names:
+            doc = RawSpatialDocument(f"doc_{name}", "test", dim, [
+                SpatialToken(name, BoundingBox(100.0, 200.0, 400.0, 240.0), 0.99, 1),
+                SpatialToken(f"R$ {price:.2f}".replace('.', ','), BoundingBox(100.0, 250.0, 250.0, 290.0), 0.99, 2),
+            ])
+            res = ad.processar_documento(doc)
+            self.assertEqual(len(res.entidades), 1, f"Falha ao extrair entidade com nome curto '{name}'")
+            self.assertIn(name.split()[0], res.entidades[0].atributos.get("nome"))
+
+        # 2. Descarte de ruído puro (símbolos, datas, percentuais, CNPJs, preposições isoladas)
+        noise_doc = RawSpatialDocument("doc_noise", "test", dim, [
+            SpatialToken("---", BoundingBox(100.0, 100.0, 150.0, 130.0), 0.99, 1),
+            SpatialToken("15/08/2026", BoundingBox(100.0, 140.0, 250.0, 170.0), 0.99, 2),
+            SpatialToken("25%", BoundingBox(100.0, 180.0, 180.0, 210.0), 0.99, 3),
+            SpatialToken("12.345.678/0001-90", BoundingBox(100.0, 220.0, 350.0, 250.0), 0.99, 4),
+            SpatialToken("R$ 50,00", BoundingBox(100.0, 300.0, 250.0, 340.0), 0.99, 5),
+        ])
+        res_noise = ad.processar_documento(noise_doc)
+        self.assertEqual(len(res_noise.entidades), 1)
+        # O nome extraído não pode ser o CNPJ, data, percentual ou traços
+        nome_extraido = res_noise.entidades[0].atributos.get("nome")
+        self.assertNotIn("12.345.678", nome_extraido)
+        self.assertNotIn("15/08", nome_extraido)
+        self.assertNotIn("25%", nome_extraido)
+        self.assertNotIn("---", nome_extraido)
+
 
 if __name__ == "__main__":
     unittest.main()
