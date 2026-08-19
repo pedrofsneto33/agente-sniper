@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Módulo de Domínio — Normalização e Sanitização Textual / Numérica.
 Lógica de domínio pura sem I/O, rede, banco ou estado global.
@@ -91,32 +91,50 @@ def parse_money(value: Any) -> Optional[float]:
 
 
 def normalizar_quantidade(unidade: str) -> Tuple[Optional[float], Optional[str]]:
-    """Padroniza unidades de medida para equivalência matemática (ex: kg -> g, l -> ml)."""
-    n = normalizar(unidade).replace(",", ".")
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(kg|g|mg|l|ml|un|und|unidade|unidades|m2|m²)", n)
-    if not m:
+    """Padroniza unidades de medida para equivalência matemática (ex: kg -> g, l -> ml, diárias/sessões -> un)."""
+    if not unidade:
         return None, None
-    val = float(m.group(1))
-    unit = m.group(2)
-    if unit == "kg": return val * 1000, "g"
-    if unit == "mg": return val / 1000, "g"
-    if unit == "l": return val * 1000, "ml"
-    if unit in {"un", "und", "unidade", "unidades"}: return val, "un"
-    if unit in {"m2", "m²"}: return val, "m2"
-    return val, unit
+    n = normalizar(unidade).replace(",", ".")
+    # 1. Pesos (canônico: g)
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(kg|kilo|quilo|kilos|quilos)\b", n)
+    if m: return float(m.group(1)) * 1000.0, "g"
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(g|gr|grama|gramas)\b", n)
+    if m: return float(m.group(1)), "g"
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(mg|miligrama|miligramas)\b", n)
+    if m: return float(m.group(1)) / 1000.0, "g"
+
+    # 2. Volumes (canônico: ml)
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(l|lt|litro|litros)\b", n)
+    if m: return float(m.group(1)) * 1000.0, "ml"
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(ml|mls|mililitro|mililitros)\b", n)
+    if m: return float(m.group(1)), "ml"
+
+    # 3. Unidades / Contagens / Serviços (canônico: un)
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item)\b", n)
+    if m: return float(m.group(1)), "un"
+
+    # 4. Área (canônico: m2)
+    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(m2|m²|metros quadrados)\b", n)
+    if m: return float(m.group(1)), "m2"
+
+    return None, None
 
 
 def nome_produto_normalizado(name: str) -> str:
     """Remove unidades e caracteres especiais para comparação fonética de produtos."""
     n = normalizar(name)
-    n = re.sub(r"\b\d+(?:[\.,]\d+)?\s*(kg|g|mg|l|ml|un|und|unidade|unidades|m2|m²)\b", " ", n)
+    n = re.sub(
+        r"\b\d+(?:[\.,]\d+)?\s*(kg|kilo|quilo|kilos|quilos|g|gr|grama|gramas|mg|miligrama|miligramas|l|lt|litro|litros|ml|mls|mililitro|mililitros|un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item|m2|m²)\b",
+        " ",
+        n
+    )
     n = re.sub(r"[^a-z0-9]+", " ", n)
     return re.sub(r"\s+", " ", n).strip()
 
 
 def tokens_produto(name: str) -> Set[str]:
     """Gera conjunto de tokens significativos do produto sem stopwords."""
-    stop = {"de", "da", "do", "e", "com", "sem", "para", "em", "tipo", "kit"}
+    stop = {"de", "da", "do", "e", "com", "sem", "para", "em", "tipo", "kit", "por", "cada", "mes", "ano"}
     return {x for x in nome_produto_normalizado(name).split() if len(x) > 2 and x not in stop}
 
 

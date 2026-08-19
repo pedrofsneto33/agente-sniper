@@ -78,12 +78,12 @@ def score_ambiente_competitivo(dimensoes: Dict[str, Dict[str, Any]]) -> Dict[str
 def score_pressao_competitiva(
     fontes: Sequence[Fonte],
     events: Sequence[Dict[str, Any]],
-    empresa_alvo: str = "Supermercado Carvalho"
+    empresa_alvo: str = ""
 ) -> Dict[str, Any]:
     """
     Mede o nível de pressão e movimentos externos de concorrentes.
     """
-    externos = [e for e in events if e.get("current", False) and e.get("entity") not in {"", empresa_alvo}]
+    externos = [e for e in events if e.get("current", False) and (not empresa_alvo or e.get("entity") != empresa_alvo) and e.get("entity") != ""]
     externos = [e for e in externos if e.get("entity") != "mercado" or e.get("importance", 0) >= 55]
     if not externos:
         return {
@@ -114,12 +114,12 @@ def score_pressao_competitiva(
 
 def score_vulnerabilidade_empresa(
     events: Sequence[Dict[str, Any]],
-    empresa_alvo: str = "Supermercado Carvalho"
+    empresa_alvo: str = ""
 ) -> Dict[str, Any]:
     """
     Mede a exposição a riscos da empresa alvo com controle estrito anti-inflação.
     """
-    riscos = [e for e in events if e.get("current", False) and e.get("entity") == empresa_alvo and e.get("kind") in RISK_KINDS]
+    riscos = [e for e in events if e.get("current", False) and (not empresa_alvo or e.get("entity") == empresa_alvo) and e.get("kind") in RISK_KINDS]
     if not riscos:
         return {"score": 0, "label": "BAIXA", "cobertura": 0.0, "tipo": "vulnerabilidade_empresa"}
     total = 0.0

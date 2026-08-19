@@ -531,8 +531,13 @@ def alias_empresa(texto: str) -> Optional[str]:
     return None
 
 
-def identidade_conflitante(texto: str, empresa_alvo: str = EMPRESA_ALVO) -> bool:
-    return _domain_identidade_conflitante(texto, empresa_alvo)
+def identidade_conflitante(texto: str, empresa_alvo: str = EMPRESA_ALVO, termos_conflitantes: Optional[Sequence[str]] = None) -> bool:
+    if termos_conflitantes is None and "carvalho" in normalizar(empresa_alvo):
+        termos_conflitantes = [
+            "loja de ferramentas", "m carvalho & cia", "m carvalho e cia",
+            "ferramentas", "material de construcao", "material de construção"
+        ]
+    return _domain_identidade_conflitante(texto, empresa_alvo=empresa_alvo, termos_conflitantes=termos_conflitantes)
 
 
 def cidade_ok(texto: str, cidade: str = CIDADE) -> bool:

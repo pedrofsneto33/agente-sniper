@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Módulo de Domínio — Identidade Empresarial, Geográfica e de URLs.
 Funções puras sem acoplamento a variáveis globais de ambiente.
@@ -6,7 +6,7 @@ Funções puras sem acoplamento a variáveis globais de ambiente.
 import hashlib
 import re
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import urlparse, urlunparse
 
 from domain.normalizer import normalizar, termo, parse_data
@@ -89,12 +89,16 @@ def estado_ok(texto: str, estado: str = "") -> bool:
     return termo(n, est)
 
 
-def identidade_conflitante(texto: str, empresa_alvo: str = "carvalho") -> bool:
-    """Detecta homônimos em ramos conflitantes (ex: materiais de construção / ferramentas)."""
-    n = normalizar(texto)
-    if "carvalho" not in normalizar(empresa_alvo):
+def identidade_conflitante(
+    texto: str,
+    empresa_alvo: str = "",
+    termos_conflitantes: Optional[Sequence[str]] = None
+) -> bool:
+    """
+    Detecta homônimos em ramos conflitantes a partir de uma política configurada de termos de exclusão.
+    Retorna False caso nenhuma lista de termos conflitantes seja fornecida.
+    """
+    if not termos_conflitantes:
         return False
-    return any(x in n for x in [
-        "loja de ferramentas", "m carvalho & cia", "m carvalho e cia",
-        "ferramentas", "material de construcao", "material de construção"
-    ])
+    n = normalizar(texto)
+    return any(normalizar(x) in n for x in termos_conflitantes if x)

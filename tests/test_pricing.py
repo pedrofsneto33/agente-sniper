@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Testes Unitários Exclusivos do Módulo domain/pricing.py — Agente Sniper
 Cobre: Cálculo puro de variações de preço, limiar min_change_pct, alternâncias promocionais,
@@ -183,6 +183,52 @@ class TestPricing(unittest.TestCase):
         }
         res = detectar_mudancas_preco(snapshots, precos_anteriores=old, max_mudancas=100)
         self.assertEqual(len(res), 100)
+
+    def test_18_ordenacao_magnitude_e_desempate_deterministico(self):
+        """18. Ordenação estrita por magnitude de change_pct e desempate determinístico."""
+        snapshots = [
+            dict(self.snap_base, product_key="p_baixa", price=10.50),   # +5%
+            dict(self.snap_base, product_key="p_alta_b", price=15.00),  # +50%
+            dict(self.snap_base, product_key="p_alta_a", price=15.00),  # +50%
+            dict(self.snap_base, product_key="p_queda", price=6.00),    # -40%
+        ]
+        old = {
+            ("Supermercado Carvalho", "carvalho.com.br", "p_baixa"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_alta_b"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_alta_a"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_queda"): (10.00, False),
+        }
+        res = detectar_mudancas_preco(snapshots, precos_anteriores=old)
+        self.assertEqual(len(res), 4)
+        # Maior magnitude primeiro (50% antes de 40%, que vem antes de 5%)
+        self.assertEqual(res[0]["change_pct"], 50.00)
+        self.assertEqual(res[0]["product_key"], "p_alta_a")  # Desempate alfabético por product_key
+        self.assertEqual(res[1]["change_pct"], 50.00)
+        self.assertEqual(res[1]["product_key"], "p_alta_b")
+        self.assertEqual(res[2]["change_pct"], -40.00)
+        self.assertEqual(res[3]["change_pct"], 5.00)
+
+    def test_19_resiliencia_tipos_invalidos_e_precos_negativos(self):
+        """19. Resiliência contra 'Sob Consulta', strings malformadas e preços negativos."""
+        snapshots = [
+            dict(self.snap_base, product_key="p_consulta", price="Sob Consulta"),
+            dict(self.snap_base, product_key="p_invalido", price="N/A"),
+            dict(self.snap_base, product_key="p_negativo_atual", price=-5.00),
+            dict(self.snap_base, product_key="p_valido", price=12.00),
+        ]
+        old = {
+            ("Supermercado Carvalho", "carvalho.com.br", "p_consulta"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_invalido"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_negativo_atual"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_valido"): (10.00, False),
+            ("Supermercado Carvalho", "carvalho.com.br", "p_antigo_negativo"): (-10.00, False),
+        }
+        res = detectar_mudancas_preco(snapshots, precos_anteriores=old)
+        # Apenas p_negativo_atual e p_valido são numéricos e têm old_price > 0
+        keys = [r["product_key"] for r in res]
+        self.assertIn("p_valido", keys)
+        self.assertNotIn("p_consulta", keys)
+        self.assertNotIn("p_invalido", keys)
 
 
 if __name__ == "__main__":

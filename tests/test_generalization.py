@@ -506,6 +506,67 @@ class TestGeneralization(unittest.TestCase):
         self.assertEqual(ent.ancoras[0].valor_normalizado, 20.79)
         self.assertTrue(len(ent.evidencias) >= 2, "A entidade dominante deve incorporar as evidências da região subordinada.")
 
+    def test_19_matching_quantity_and_volume_adversarial(self):
+        """Testa o algoritmo de matching com quantização canônica, bônus de equivalência e penalização por volumes distintos."""
+        from domain.models import PriceItem
+        from domain.matching import similaridade_produto
+
+        # 1. Quantidades diferentes não podem casar (ex: 500g vs 250g)
+        p_500g = PriceItem(source="s1", role="r", name="CAFÉ PILÃO 500G", url="u1")
+        p_250g = PriceItem(source="s2", role="r", name="CAFÉ PILÃO 250G", url="u2")
+        sim_cafe_diff = similaridade_produto(p_500g, p_250g)
+        self.assertLess(sim_cafe_diff, 0.45, f"500g vs 250g deve sofrer penalidade estrita: {sim_cafe_diff}")
+
+        # 2. Quantidades equivalentes em unidades distintas devem casar com alta similaridade (500g vs 0.5kg)
+        p_05kg = PriceItem(source="s2", role="r", name="CAFÉ PILÃO 0,5KG", url="u2")
+        sim_cafe_eq = similaridade_produto(p_500g, p_05kg)
+        self.assertGreaterEqual(sim_cafe_eq, 0.90, f"500g vs 0.5kg deve ter alta similaridade: {sim_cafe_eq}")
+
+        # 3. Volumes distintos não podem casar (500ml vs 1L)
+        p_500ml = PriceItem(source="s1", role="r", name="ÁGUA MINERAL CRISTAL 500ML", url="u1")
+        p_1l = PriceItem(source="s2", role="r", name="ÁGUA MINERAL CRISTAL 1L", url="u2")
+        sim_agua_diff = similaridade_produto(p_500ml, p_1l)
+        self.assertLess(sim_agua_diff, 0.45, f"500ml vs 1L deve sofrer penalidade: {sim_agua_diff}")
+
+        # 4. Volumes equivalentes em unidades distintas (1000ml vs 1L)
+        p_1000ml = PriceItem(source="s1", role="r", name="ÁGUA MINERAL CRISTAL 1000ML", url="u1")
+        sim_agua_eq = similaridade_produto(p_1000ml, p_1l)
+        self.assertGreaterEqual(sim_agua_eq, 0.90, f"1000ml vs 1L deve ter alta similaridade: {sim_agua_eq}")
+
+        # 5. Produto com quantidade vs produto sem quantidade (conservador sem colapso)
+        p_sem_unit = PriceItem(source="s1", role="r", name="ÁGUA MINERAL CRISTAL", url="u1")
+        sim_sem_unit = similaridade_produto(p_sem_unit, p_1l)
+        self.assertTrue(0.70 <= sim_sem_unit <= 0.90, f"Sem unit vs com unit deve manter similaridade moderada: {sim_sem_unit}")
+
+        # 6. Planos/serviços com atributos numéricos distintos (ex: Plano 99 vs Plano 199)
+        p_plano_99 = PriceItem(source="s1", role="r", name="PLANO PRO 99,90/MÊS", url="u1")
+        p_plano_199 = PriceItem(source="s2", role="r", name="PLANO PRO 199,90/MÊS", url="u2")
+        sim_planos_diff = similaridade_produto(p_plano_99, p_plano_199)
+        self.assertLess(sim_planos_diff, 0.60, f"Planos de valores distintos devem sofrer deságio: {sim_planos_diff}")
+
+        # 7. Planos idênticos
+        sim_planos_iguais = similaridade_produto(p_plano_99, p_plano_99)
+        self.assertGreaterEqual(sim_planos_iguais, 0.90, f"Planos idênticos devem ter alta similaridade: {sim_planos_iguais}")
+
+    def test_20_identity_agnostic_conflict_policy(self):
+        """Testa o comportamento agnóstico de identidade_conflitante com e sem políticas de exclusão injetadas."""
+        from domain.identity import identidade_conflitante
+
+        # 1. Sem política configurada -> agnóstico puro (nunca inventa conflito)
+        self.assertFalse(identidade_conflitante("M Carvalho & Cia Loja de Ferramentas", empresa_alvo="Carvalho"))
+        self.assertFalse(identidade_conflitante("Hospital Veterinário Santa Clara", empresa_alvo="Hospital Santa Clara"))
+
+        # 2. Com política configurada para Carvalho (varejo alimentar vs ferramentas/construção)
+        termos_carvalho = ["loja de ferramentas", "material de construcao", "ferramentas"]
+        self.assertTrue(identidade_conflitante("M Carvalho & Cia Loja de Ferramentas em Teresina", termos_conflitantes=termos_carvalho))
+        self.assertTrue(identidade_conflitante("Carvalho Material de Construcao e Tintas", termos_conflitantes=termos_carvalho))
+        self.assertFalse(identidade_conflitante("Supermercado Carvalho Ofertas da Semana", termos_conflitantes=termos_carvalho))
+
+        # 3. Com política configurada para outro nicho (ex: Hospital Humano vs Clínica Veterinária / Pet Shop)
+        termos_hospital = ["veterinaria", "veterinario", "pet shop", "agropecuaria"]
+        self.assertTrue(identidade_conflitante("Clinica Veterinaria Santa Clara 24h", termos_conflitantes=termos_hospital))
+        self.assertFalse(identidade_conflitante("Hospital Santa Clara Pronto Socorro", termos_conflitantes=termos_hospital))
+
 
 if __name__ == "__main__":
     unittest.main()

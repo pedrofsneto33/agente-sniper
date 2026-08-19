@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Módulo de Precificação e Inteligência de Preços — Agente Sniper
 Responsável por calcular variações percentuais de preços, alternância promocional e deltas de mercado sem dependências de infraestrutura.
@@ -29,23 +29,50 @@ def detectar_mudancas_preco(
     changes: List[Dict[str, Any]] = []
 
     for x in snapshots:
-        key = (x.get("entity", ""), x.get("source_domain", ""), x.get("product_key", ""))
+        key = (str(x.get("entity") or ""), str(x.get("source_domain") or ""), str(x.get("product_key") or ""))
         old = precos_anteriores.get(key)
-        if old and x.get("price") is not None and old[0] not in (None, 0):
-            pct = (float(x["price"]) - float(old[0])) / float(old[0]) * 100
-            promo_changed = bool(x.get("promotion")) != old[1]
-            if abs(pct) >= min_change_pct or promo_changed:
-                changes.append({
-                    "entity": x.get("entity"),
-                    "source_domain": x.get("source_domain"),
-                    "product_key": x.get("product_key"),
-                    "product_name": x.get("product_name"),
-                    "previous_price": old[0],
-                    "current_price": x.get("price"),
-                    "change_pct": round(pct, 2),
-                    "promotion_before": old[1],
-                    "promotion_now": bool(x.get("promotion")),
-                    "url": x.get("url", "")
-                })
+        if not old:
+            continue
+
+        old_price_raw, old_promo = old[0], old[1]
+        new_price_raw = x.get("price")
+
+        # Validação robusta contra tipos inválidos e valores nulos
+        if old_price_raw is None or new_price_raw is None:
+            continue
+
+        try:
+            old_price = float(old_price_raw)
+            new_price = float(new_price_raw)
+        except (ValueError, TypeError):
+            continue
+
+        # Preço histórico não-positivo é inválido para cálculo percentual
+        if old_price <= 0:
+            continue
+
+        pct = (new_price - old_price) / old_price * 100.0
+        promo_changed = bool(x.get("promotion")) != bool(old_promo)
+
+        if abs(pct) >= min_change_pct or promo_changed:
+            changes.append({
+                "entity": x.get("entity"),
+                "source_domain": x.get("source_domain"),
+                "product_key": x.get("product_key"),
+                "product_name": x.get("product_name"),
+                "previous_price": old_price_raw,
+                "current_price": new_price_raw,
+                "change_pct": round(pct, 2),
+                "promotion_before": old_promo,
+                "promotion_now": bool(x.get("promotion")),
+                "url": x.get("url", "")
+            })
+
+    # Ordenação determinística: maior magnitude percentual primeiro, depois entidade, depois chave do produto
+    changes.sort(key=lambda item: (
+        -abs(item["change_pct"]),
+        str(item.get("entity") or ""),
+        str(item.get("product_key") or "")
+    ))
 
     return changes[:max_mudancas]
