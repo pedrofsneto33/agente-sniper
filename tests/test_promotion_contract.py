@@ -89,7 +89,7 @@ class TestPromotionContract(unittest.TestCase):
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
-        items = executar_pipeline_extracao(caminho_ocr, engine="generic")["price_items"]
+        items = executar_pipeline_extracao(caminho_ocr, engine="flyer")["price_items"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             caminho_db = Path(tmpdir) / "teste_shadow.sqlite3"

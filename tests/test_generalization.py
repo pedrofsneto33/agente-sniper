@@ -792,6 +792,120 @@ class TestGeneralization(unittest.TestCase):
         self.assertNotIn("25%", nome_extraido)
         self.assertNotIn("---", nome_extraido)
 
+    def test_25_multi_nicho_dominance_and_case1_mandatory_suite(self):
+        """Fase 15: Bateria obrigatória de 10 cenários multi-nicho de dominância e Caso 1 real."""
+        from extractors.models import BoundingBox, SpatialToken, RawSpatialDocument, AnchorEvidenceKind
+        from extractors.adapters import GeneralSpatialAdapter, FlyerProductAdapter
+        from extractors.bridge import carregar_ocr_bruto
+        from pathlib import Path
+        import json
+
+        dim = (2000.0, 3000.0)
+        ad = GeneralSpatialAdapter()
+
+        # 1. Restaurante: Prato Executivo Filé — 59,90 (BARE_DECIMAL preservado)
+        doc_rest = RawSpatialDocument("doc_rest", "restaurant", dim, [
+            SpatialToken("PRATO EXECUTIVO FILÉ", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("59,90", BoundingBox(100.0, 240.0, 200.0, 270.0), 0.99, 2),
+        ])
+        res_rest = ad.processar_documento(doc_rest)
+        self.assertEqual(len(res_rest.entidades), 1)
+        self.assertEqual(res_rest.entidades[0].valor, 59.90)
+        self.assertIn("PRATO EXECUTIVO", res_rest.entidades[0].atributos.get("nome"))
+
+        # 2. Hotel: Suíte — 2 diárias — R$ 350,00 (Preço R$ 350,00)
+        doc_hotel = RawSpatialDocument("doc_hotel", "hotel", dim, [
+            SpatialToken("SUÍTE MASTER", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+            SpatialToken("2 DIÁRIAS", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.95, 2),
+            SpatialToken("R$ 350,00", BoundingBox(100.0, 275.0, 250.0, 305.0), 0.99, 3),
+        ])
+        res_hotel = ad.processar_documento(doc_hotel)
+        self.assertEqual(len(res_hotel.entidades), 1)
+        self.assertEqual(res_hotel.entidades[0].valor, 350.00)
+
+        # 3. Clínica: Tratamento — 10 sessões — R$ 180,00 (Preço R$ 180,00)
+        doc_clin = RawSpatialDocument("doc_clin", "clinic", dim, [
+            SpatialToken("TRATAMENTO FISIOTERAPIA", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("10 SESSÕES", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.95, 2),
+            SpatialToken("R$ 180,00", BoundingBox(100.0, 275.0, 250.0, 305.0), 0.99, 3),
+        ])
+        res_clin = ad.processar_documento(doc_clin)
+        self.assertEqual(len(res_clin.entidades), 1)
+        self.assertEqual(res_clin.entidades[0].valor, 180.00)
+
+        # 4. Coincidência: Pacote 10 sessões — 10,00 (Preço 10,00 preservado)
+        doc_coinc = RawSpatialDocument("doc_coinc", "clinic", dim, [
+            SpatialToken("PACOTE PROMOCIONAL", BoundingBox(100.0, 200.0, 400.0, 230.0), 0.99, 1),
+            SpatialToken("10 SESSÕES", BoundingBox(100.0, 240.0, 250.0, 265.0), 0.95, 2),
+            SpatialToken("10,00", BoundingBox(100.0, 275.0, 200.0, 305.0), 0.99, 3),
+        ])
+        res_coinc = ad.processar_documento(doc_coinc)
+        self.assertEqual(len(res_coinc.entidades), 1)
+        self.assertEqual(res_coinc.entidades[0].valor, 10.00)
+
+        # 5. SaaS: Plano Pro — 99,90/mês (CADENCE_PRICE)
+        doc_saas = RawSpatialDocument("doc_saas", "saas", dim, [
+            SpatialToken("PLANO PRO", BoundingBox(100.0, 200.0, 300.0, 230.0), 0.99, 1),
+            SpatialToken("99,90/MÊS", BoundingBox(100.0, 240.0, 280.0, 270.0), 0.99, 2),
+        ])
+        res_saas = ad.processar_documento(doc_saas)
+        self.assertEqual(len(res_saas.entidades), 1)
+        self.assertEqual(res_saas.entidades[0].valor, 99.90)
+
+        # 6. B2B: Proposta Comercial 2.026 — R$ 5.000,00 (Preço 5000,00)
+        doc_b2b = RawSpatialDocument("doc_b2b", "b2b", dim, [
+            SpatialToken("PROPOSTA COMERCIAL 2.026", BoundingBox(100.0, 200.0, 450.0, 230.0), 0.99, 1),
+            SpatialToken("R$ 5.000,00", BoundingBox(100.0, 240.0, 300.0, 270.0), 0.99, 2),
+        ])
+        res_b2b = ad.processar_documento(doc_b2b)
+        self.assertEqual(len(res_b2b.entidades), 1)
+        self.assertEqual(res_b2b.entidades[0].valor, 5000.00)
+
+        # 7. Caso 1 real: 49464_pagina_1.json (falso 162,49 eliminado; 20,79 CADA preservado; 9 entidades)
+        path_caso1 = Path(r"dados_browser/ocr_bruto/49464_pagina_1.json")
+        if path_caso1.exists():
+            doc_real_c1 = carregar_ocr_bruto(path_caso1)
+            ad_flyer = FlyerProductAdapter()
+            res_c1 = ad_flyer.processar_documento(doc_real_c1)
+            self.assertEqual(len(res_c1.entidades), 9, "49464_pagina_1 deve conter exatamente 9 entidades legítimas")
+            valores_c1 = [e.valor for e in res_c1.entidades]
+            self.assertIn(20.79, valores_c1, "20.79 CADA deve ser preservado")
+            self.assertNotIn(162.49, valores_c1, "Falso preço 162.49 não pode existir como entidade independente")
+
+        # 8. Bare number isolado: vários valores legítimos continuam funcionando
+        for bare_val in [23.90, 350.00, 59.90, 12.50]:
+            doc_bare = RawSpatialDocument(f"doc_bare_{bare_val}", "bare", dim, [
+                SpatialToken("SERVIÇO AVULSO", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+                SpatialToken(f"{bare_val:.2f}".replace('.', ','), BoundingBox(100.0, 240.0, 220.0, 270.0), 0.99, 2),
+            ])
+            res_bare = ad.processar_documento(doc_bare)
+            self.assertEqual(len(res_bare.entidades), 1)
+            self.assertEqual(res_bare.entidades[0].valor, bare_val)
+
+        # 9. Duas ofertas próximas: dominância não atravessa regiões distintas
+        doc_duas = RawSpatialDocument("doc_duas", "test", dim, [
+            # Oferta 1 (Card Esquerdo)
+            SpatialToken("PRODUTO ALFA", BoundingBox(100.0, 200.0, 350.0, 230.0), 0.99, 1),
+            SpatialToken("R$ 100,00", BoundingBox(100.0, 240.0, 250.0, 270.0), 0.99, 2),
+            # Oferta 2 (Card Direito)
+            SpatialToken("PRODUTO BETA", BoundingBox(600.0, 200.0, 850.0, 230.0), 0.99, 3),
+            SpatialToken("50,00", BoundingBox(600.0, 240.0, 720.0, 270.0), 0.99, 4),
+        ])
+        res_duas = ad.processar_documento(doc_duas)
+        self.assertEqual(len(res_duas.entidades), 2, "Duas ofertas distintas não podem colapsar por dominância errônea")
+        precos_duas = sorted([e.valor for e in res_duas.entidades])
+        self.assertEqual(precos_duas, [50.00, 100.00])
+
+        # 10. Determinismo: mesma entrada produz exatamente a mesma saída
+        if path_caso1.exists():
+            res_det_1 = [e.to_dict() for e in ad_flyer.processar_documento(doc_real_c1).entidades]
+            res_det_2 = [e.to_dict() for e in ad_flyer.processar_documento(doc_real_c1).entidades]
+            self.assertEqual(
+                json.dumps(res_det_1, sort_keys=True),
+                json.dumps(res_det_2, sort_keys=True),
+                "Execução do pipeline deve ser estritamente determinística"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
