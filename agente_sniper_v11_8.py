@@ -54,6 +54,7 @@ Observação:
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import difflib
 import hashlib
@@ -63,8 +64,10 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
 from html import unescape as html_unescape
@@ -73,6 +76,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import quote_plus, urljoin, urlparse, urlunparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -174,9 +179,15 @@ RUN_ID = HOJE.strftime("%Y%m%d_%H%M%S")
 SEMANA_ID = HOJE.strftime("%Y-W%U")
 
 EMPRESA_ALVO = os.getenv("EMPRESA_ALVO", "Supermercado Carvalho").strip()
+EMPRESA_URL = os.getenv("EMPRESA_URL", "").strip()
 CIDADE = os.getenv("CIDADE", "Teresina").strip()
 ESTADO = os.getenv("ESTADO", "PI").strip()
 NICHO = os.getenv("NICHO", "supermercado").strip().lower()
+
+TERMOS_CONFLITANTES_IDENTIDADE_ENV = os.getenv("TERMOS_CONFLITANTES_IDENTIDADE", "").strip()
+TERMOS_CONFLITANTES_IDENTIDADE = [
+    x.strip() for x in TERMOS_CONFLITANTES_IDENTIDADE_ENV.split(",") if x.strip()
+] if TERMOS_CONFLITANTES_IDENTIDADE_ENV else None
 
 ALIASES_ENV = os.getenv("EMPRESA_ALIASES", "").strip()
 if ALIASES_ENV:
@@ -221,6 +232,9 @@ PRICE_DISCOVERY_LIMIT_PER_ENTITY = min(int(os.getenv("PRICE_DISCOVERY_LIMIT_PER_
 PRICE_CRAWL_LINK_LIMIT = min(int(os.getenv("PRICE_CRAWL_LINK_LIMIT", "20")), 20)
 PRICE_MAX_DOMAINS_PER_ENTITY = int(os.getenv("PRICE_MAX_DOMAINS_PER_ENTITY", "4"))
 PRICE_REQUIRE_COMMERCIAL_SIGNAL = os.getenv("PRICE_REQUIRE_COMMERCIAL_SIGNAL", "1") == "1"
+SITEMAP_PROBING_TIMEOUT = float(os.getenv("SITEMAP_PROBING_TIMEOUT", "4.0"))
+DISCOVERY_MAX_WORKERS = min(int(os.getenv("DISCOVERY_MAX_WORKERS", "6")), 10)
+ENRICH_MAX_WORKERS = min(int(os.getenv("ENRICH_MAX_WORKERS", "8")), 12)
 PRICE_HISTORY_MIN_CHANGE_PCT = float(os.getenv("PRICE_HISTORY_MIN_CHANGE_PCT", "0.5"))
 PRICE_DISCOVERY_PATH_HINTS = [
     x.strip().lower() for x in os.getenv(
@@ -532,11 +546,8 @@ def alias_empresa(texto: str) -> Optional[str]:
 
 
 def identidade_conflitante(texto: str, empresa_alvo: str = EMPRESA_ALVO, termos_conflitantes: Optional[Sequence[str]] = None) -> bool:
-    if termos_conflitantes is None and "carvalho" in normalizar(empresa_alvo):
-        termos_conflitantes = [
-            "loja de ferramentas", "m carvalho & cia", "m carvalho e cia",
-            "ferramentas", "material de construcao", "material de construção"
-        ]
+    if termos_conflitantes is None:
+        termos_conflitantes = TERMOS_CONFLITANTES_IDENTIDADE
     return _domain_identidade_conflitante(texto, empresa_alvo=empresa_alvo, termos_conflitantes=termos_conflitantes)
 
 
@@ -565,15 +576,427 @@ def json_seguro(texto: str) -> Optional[Dict[str, Any]]:
 
 def source_domain_root(url: str) -> str:
     return dominio(url)
-    return dominio(url)
 
-def _fetch_html_http(url: str) -> Tuple[str, str]:
+# ============================================================
+# FASE 18.1: POOL DE CONEXÕES HTTP E CACHE DE PROBING
+# ============================================================
+
+_HTTP_SESSION: Optional[requests.Session] = None
+
+def get_http_session() -> requests.Session:
+    """Retorna ou inicializa uma Session HTTP reutilizável com pooling de conexões e keep-alive."""
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=25,
+            pool_maxsize=25,
+            max_retries=Retry(
+                total=1,
+                backoff_factor=0.2,
+                status_forcelist=[502, 503, 504],
+                raise_on_status=False,
+            )
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        session.headers.update({
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        })
+        _HTTP_SESSION = session
+    return _HTTP_SESSION
+
+_STATS_LOCK = threading.Lock()
+
+_IO_STATS: Dict[str, Any] = {
+    "domain_probes": 0,
+    "probes_cache_hit": 0,
+    "sitemaps_skipped": 0,
+    "http_requests": 0,
+    "http_time": 0.0,
+    "expansion_time": 0.0,
+    "unique_domains": set(),
+    "repeated_domains": 0,
+    "discovery_time": 0.0,
+    "discovery_workers": DISCOVERY_MAX_WORKERS,
+    "discovery_tasks": 0,
+    "enrich_time": 0.0,
+    "enrich_workers": ENRICH_MAX_WORKERS,
+    "enrich_tasks": 0,
+    "http_200": 0,
+    "http_403": 0,
+    "http_429": 0,
+    "http_5xx": 0,
+    "http_timeouts": 0,
+    "host_errors": {},
+}
+
+_DOMAIN_EXPANSION_CACHE: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+_SITEMAP_DEAD_DOMAINS: Set[str] = set()
+
+# ============================================================
+# FASE 18.3: PLAYWRIGHT PERSISTENTE & GERENCIADOR DE BROWSER
+# ============================================================
+
+class PersistentPlaywrightManager:
+    """Gerencia uma única instância persistente de Playwright/Chromium por run com isolamento entre páginas."""
+
+    def __init__(self):
+        self._pw = None
+        self._browser = None
+        self._lock = threading.Lock()
+        self._initialized = False
+
+        # Telemetria da Fase 18.3
+        self.launch_count = 0
+        self.contexts_created = 0
+        self.pages_created = 0
+        self.pages_closed = 0
+        self.startup_time = 0.0
+        self.navigation_time = 0.0
+        self.render_time = 0.0
+        self.success_count = 0
+        self.fail_count = 0
+        self.timeout_count = 0
+
+    def get_browser(self):
+        if not PLAYWRIGHT_ATIVO:
+            return None
+        with self._lock:
+            if self._browser is None and not self._initialized:
+                t0 = time.perf_counter()
+                try:
+                    from playwright.sync_api import sync_playwright
+                    self._pw = sync_playwright().start()
+                    self._browser = self._pw.chromium.launch(headless=True)
+                    self.launch_count += 1
+                    self.startup_time = time.perf_counter() - t0
+                    self._initialized = True
+                    logger.info("[PLAYWRIGHT POOL] Chromium persistente inicializado em %.2fs", self.startup_time)
+                except Exception as e:
+                    self._initialized = True
+                    logger.warning("[PLAYWRIGHT POOL] Falha ao inicializar Chromium: %s", str(e)[:150])
+                    self._browser = None
+                    self._pw = None
+            return self._browser
+
+    def new_isolated_context(self, user_agent: str = USER_AGENT, locale: str = "pt-BR"):
+        browser = self.get_browser()
+        if not browser:
+            return None
+        with self._lock:
+            try:
+                context = browser.new_context(user_agent=user_agent, locale=locale)
+                self.contexts_created += 1
+                return context
+            except Exception as e:
+                logger.debug("[PLAYWRIGHT POOL] Erro ao criar contexto isolado: %s", str(e)[:120])
+                return None
+
+    def extrair_pagina_playwright(self, url: str, timeout: int = 30000) -> Optional[Dict[str, Any]]:
+        context = self.new_isolated_context()
+        if not context:
+            return None
+        page = None
+        try:
+            with self._lock:
+                self.pages_created += 1
+            page = context.new_page()
+
+            t_nav = time.perf_counter()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            with self._lock:
+                self.navigation_time += (time.perf_counter() - t_nav)
+
+            t_rend = time.perf_counter()
+            texto = page.locator("body").inner_text(timeout=12000)
+            title = page.title()
+            final_url = page.url
+            with self._lock:
+                self.render_time += (time.perf_counter() - t_rend)
+                self.success_count += 1
+
+            return {"conteudo": texto, "titulo": title, "final_url": final_url, "data_publicacao": ""}
+        except Exception as e:
+            with self._lock:
+                self.fail_count += 1
+                if "timeout" in str(e).lower():
+                    self.timeout_count += 1
+            logger.debug("[PLAYWRIGHT POOL] Falha ao extrair %s: %s", url[:80], str(e)[:120])
+            return None
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                with self._lock:
+                    self.pages_closed += 1
+            try:
+                context.close()
+            except Exception:
+                pass
+
+    def extrair_html_preco(self, url: str, timeout: int = PRICE_PLAYWRIGHT_TIMEOUT) -> Tuple[str, str]:
+        context = self.new_isolated_context()
+        if not context:
+            return "", url
+        page = None
+        try:
+            with self._lock:
+                self.pages_created += 1
+            page = context.new_page()
+
+            t_nav = time.perf_counter()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            with self._lock:
+                self.navigation_time += (time.perf_counter() - t_nav)
+
+            t_rend = time.perf_counter()
+            html = page.content()
+            final_url = page.url
+            with self._lock:
+                self.render_time += (time.perf_counter() - t_rend)
+                self.success_count += 1
+
+            return html, final_url
+        except Exception as e:
+            with self._lock:
+                self.fail_count += 1
+                if "timeout" in str(e).lower():
+                    self.timeout_count += 1
+            logger.warning("[PLAYWRIGHT POOL PREÇO] Falha %s: %s", url[:80], str(e)[:150])
+            return "", url
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                with self._lock:
+                    self.pages_closed += 1
+            try:
+                context.close()
+            except Exception:
+                pass
+
+    def session_search(self, base_url: str, search_url_template: str, queries: List[str], location_hint: str = "") -> Dict[str, List[PriceItem]]:
+        results: Dict[str, List[PriceItem]] = {}
+        context = self.new_isolated_context()
+        if not context:
+            return results
+        page = None
+        try:
+            with self._lock:
+                self.pages_created += 1
+            page = context.new_page()
+
+            t_nav = time.perf_counter()
+            page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=12000)
+            except Exception:
+                pass
+            page.wait_for_timeout(1000)
+            base_text = page.locator("body").inner_text(timeout=12000) if page.locator("body") else ""
+            location_confirmed = bool(CIDADE and normalizar(CIDADE) in normalizar(base_text))
+            with self._lock:
+                self.navigation_time += (time.perf_counter() - t_nav)
+
+            for query in queries:
+                try:
+                    target_url = _buscar_preco_site(search_url_template, query)
+                    t_q = time.perf_counter()
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1200)
+                    html = page.content()
+                    final_url = page.url
+                    with self._lock:
+                        self.navigation_time += (time.perf_counter() - t_q)
+                        self.success_count += 1
+                    note = location_hint
+                    if location_confirmed:
+                        note = (note + " | localização confirmada no contexto da sessão: " + CIDADE + ").").strip(" |")
+                    items = _extract_product_objects(html, "", "competitor", final_url, note)
+                    for item in items:
+                        item.location_note = note
+                    results[query] = items[:PRECO_MAX_RESULTADOS_POR_BUSCA]
+                except Exception as e:
+                    with self._lock:
+                        self.fail_count += 1
+                        if "timeout" in str(e).lower():
+                            self.timeout_count += 1
+                    logger.warning("[PLAYWRIGHT SESSION] busca '%s': %s", query[:80], str(e)[:120])
+                    results[query] = []
+        except Exception as e:
+            with self._lock:
+                self.fail_count += 1
+            logger.warning("[PLAYWRIGHT SESSION] falhou base %s: %s", base_url[:80], str(e)[:150])
+        finally:
+            if page:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                with self._lock:
+                    self.pages_closed += 1
+            try:
+                context.close()
+            except Exception:
+                pass
+        return results
+
+    def close_all(self):
+        with self._lock:
+            if self._browser:
+                try:
+                    self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+            if self._pw:
+                try:
+                    self._pw.stop()
+                except Exception:
+                    pass
+                self._pw = None
+            self._initialized = False
+
+_PLAYWRIGHT_MGR = PersistentPlaywrightManager()
+
+# ============================================================
+# FASE 19: TAVILY BUDGET GUARD & CIRCUIT BREAKER
+# ============================================================
+
+MAX_TAVILY_QUERIES_PER_RUN = min(int(os.getenv("MAX_TAVILY_QUERIES_PER_RUN", "5")), 5)
+_TAVILY_CACHE_TTL = 86400.0  # 24h
+
+class TavilyBudgetGuard:
+    """Gerencia o orçamento rígido, cache em memória/TTL e Circuit Breaker do Tavily."""
+
+    def __init__(self, max_queries: int = MAX_TAVILY_QUERIES_PER_RUN):
+        self.max_queries = max_queries
+        self._lock = threading.Lock()
+        self.circuit_open = False
+        self.circuit_reason = ""
+        self._cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
+
+        # Telemetria
+        self.queries_attempted = 0
+        self.queries_executed = 0
+        self.queries_blocked_budget = 0
+        self.cache_hits = 0
+        self.failures = 0
+
+    @property
+    def estimated_credits_used(self) -> int:
+        return self.queries_executed
+
+    def search(self, client: Any, query: str, categoria: str) -> List[Dict[str, Any]]:
+        """Executa busca no Tavily com controle atômico de orçamento, cache e circuit breaker."""
+        if not client or not USAR_TAVILY:
+            return []
+
+        q_key = query.strip().lower()
+
+        with self._lock:
+            self.queries_attempted += 1
+
+            # 1. Circuit Breaker
+            if self.circuit_open:
+                return []
+
+            # 2. Cache por TTL (24h)
+            if q_key in self._cache:
+                results, ts = self._cache[q_key]
+                if time.time() - ts < _TAVILY_CACHE_TTL:
+                    self.cache_hits += 1
+                    return results
+
+            # 3. Budget Guard (Máximo de consultas por RUN)
+            if self.queries_executed >= self.max_queries:
+                self.queries_blocked_budget += 1
+                logger.info("[TAVILY BUDGET] Limite de %d consultas atingido. Query pulada: %s", self.max_queries, query[:60])
+                return []
+
+            # Reserva o slot de execução
+            self.queries_executed += 1
+
+        # Execução fora do lock
+        try:
+            r = client.search(query=query, max_results=5, search_depth="basic", include_answer=False)
+            res = [
+                {
+                    "titulo": x.get("title", ""),
+                    "url": x.get("url", ""),
+                    "conteudo": x.get("content", ""),
+                    "origem": "Tavily",
+                    "data_publicacao": x.get("published_date", "") or "",
+                    "categoria": categoria,
+                }
+                for x in r.get("results", [])
+            ]
+            with self._lock:
+                self._cache[q_key] = (res, time.time())
+            return res
+        except Exception as e:
+            err_msg = str(e)
+            with self._lock:
+                self.failures += 1
+                err_lower = err_msg.lower()
+                if any(k in err_lower for k in ["429", "quota", "rate limit", "credits", "unauthorized", "401", "forbidden", "403"]):
+                    self.circuit_open = True
+                    self.circuit_reason = err_msg[:120]
+                    logger.warning("[TAVILY CIRCUIT BREAKER ABERTO] %s. Tavily desativado para esta run.", self.circuit_reason)
+                else:
+                    logger.warning("[TAVILY] %s", err_msg[:160])
+            return []
+
+_TAVILY_GUARD = TavilyBudgetGuard()
+
+def _fetch_html_http(url: str, timeout: Optional[float] = None) -> Tuple[str, str]:
+    t0 = time.perf_counter()
+    with _STATS_LOCK:
+        _IO_STATS["http_requests"] += 1
+    req_timeout = timeout if timeout is not None else REQUEST_TIMEOUT
     try:
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT, allow_redirects=True)
+        session = get_http_session()
+        r = session.get(url, timeout=req_timeout, allow_redirects=True)
+        t_elapsed = time.perf_counter() - t0
+        with _STATS_LOCK:
+            _IO_STATS["http_time"] += t_elapsed
+            if r.status_code == 200:
+                _IO_STATS["http_200"] += 1
+            elif r.status_code == 403:
+                _IO_STATS["http_403"] += 1
+            elif r.status_code == 429:
+                _IO_STATS["http_429"] += 1
+            elif 500 <= r.status_code <= 599:
+                _IO_STATS["http_5xx"] += 1
         ctype = (r.headers.get("content-type") or "").lower()
-        if r.ok and "html" in ctype and len(r.text) > 500:
+        if r.ok and ("html" in ctype or "xml" in ctype) and len(r.text) > 200:
             return r.text, r.url
+    except requests.exceptions.Timeout:
+        t_elapsed = time.perf_counter() - t0
+        with _STATS_LOCK:
+            _IO_STATS["http_time"] += t_elapsed
+            _IO_STATS["http_timeouts"] += 1
     except Exception as e:
+        t_elapsed = time.perf_counter() - t0
+        with _STATS_LOCK:
+            _IO_STATS["http_time"] += t_elapsed
+            dom = source_domain_root(url)
+            if dom:
+                _IO_STATS["host_errors"][dom] = _IO_STATS["host_errors"].get(dom, 0) + 1
         logger.debug("[PRICE DISCOVERY HTTP] %s", str(e)[:120])
     return "", url
 
@@ -623,36 +1046,81 @@ def _extract_commercial_links(base_url: str, html: str, limit: int = 20) -> List
 
 
 def _expand_commercial_domain(url: str, name: str, role: str, location_note: str = "") -> List[Dict[str, Any]]:
+    if not url:
+        return []
     if _is_blocked_price_domain(url):
         return []
     dom = source_domain_root(url)
     if not dom:
         return []
+
+    dom_norm = normalizar(dom).strip()
+    name_norm = normalizar(name).strip()
+    cache_key = (dom_norm, name_norm, role)
+
+    # 1. Deduplicação e Cache Hit na execução atual
+    if cache_key in _DOMAIN_EXPANSION_CACHE:
+        _IO_STATS["probes_cache_hit"] += 1
+        _IO_STATS["repeated_domains"] += 1
+        return [dict(x) for x in _DOMAIN_EXPANSION_CACHE[cache_key]]
+
+    _IO_STATS["domain_probes"] += 1
+    _IO_STATS["unique_domains"].add(dom_norm)
+    t_start = time.perf_counter()
+
     candidates = [url]
     root = f"https://{dom}"
     if root not in candidates:
         candidates.append(root)
-    sitemap_urls = [f"https://{dom}/sitemap.xml", f"https://{dom}/sitemap_index.xml"]
+
+    sitemap_urls = []
+    if dom_norm in _SITEMAP_DEAD_DOMAINS:
+        _IO_STATS["sitemaps_skipped"] += 2
+    else:
+        sitemap_urls = [f"https://{dom}/sitemap.xml", f"https://{dom}/sitemap_index.xml"]
+
     discovered = []
-    for seed in candidates + sitemap_urls:
-        html, final = _fetch_html_http(seed)
+    sitemap_found = False
+
+    # 2. Probing de páginas candidatas
+    for seed in candidates:
+        html, final = _fetch_html_http(seed, timeout=min(REQUEST_TIMEOUT, 10.0))
         if html:
-            if seed.endswith("sitemap.xml") or seed.endswith("sitemap_index.xml"):
-                for m in re.finditer(r"<loc>(.*?)</loc>", html, flags=re.I | re.S):
-                    u = html_unescape(m.group(1).strip())
-                    if urlparse(u).netloc == dom or urlparse(u).netloc.endswith("." + dom):
+            discovered.append(final)
+            discovered.extend(_extract_commercial_links(final, html, PRICE_CRAWL_LINK_LIMIT))
+
+    # 3. Probing de sitemaps com timeout rápido (4s)
+    for seed in sitemap_urls:
+        html, final = _fetch_html_http(seed, timeout=SITEMAP_PROBING_TIMEOUT)
+        if html and ("<loc>" in html or "<url>" in html or "<sitemap>" in html):
+            sitemap_found = True
+            for m in re.finditer(r"<loc>(.*?)</loc>", html, flags=re.I | re.S):
+                u = html_unescape(m.group(1).strip())
+                try:
+                    pu = urlparse(u)
+                    if pu.netloc == dom or pu.netloc.endswith("." + dom):
                         if is_price_candidate_url(u):
                             discovered.append(u)
-            else:
-                discovered.append(final)
-                discovered.extend(_extract_commercial_links(final, html, PRICE_CRAWL_LINK_LIMIT))
-    uniq=[]; seen=set()
+                except Exception:
+                    continue
+
+    if not sitemap_found and sitemap_urls:
+        _SITEMAP_DEAD_DOMAINS.add(dom_norm)
+
+    uniq = []
+    seen = set()
     for u in discovered:
-        if u in seen or _is_blocked_price_domain(u): continue
+        if u in seen or _is_blocked_price_domain(u):
+            continue
         seen.add(u)
-        uniq.append({"name":name,"role":role,"url":u,"domain":dom,"location_note":location_note,"discovered":True})
+        uniq.append({"name": name, "role": role, "url": u, "domain": dom, "location_note": location_note, "discovered": True})
     uniq.sort(key=lambda x: _commercial_signal_url(x["url"]), reverse=True)
-    return uniq[:PRICE_DISCOVERY_LIMIT_PER_ENTITY]
+    res = uniq[:PRICE_DISCOVERY_LIMIT_PER_ENTITY]
+
+    # Armazena no cache da run
+    _DOMAIN_EXPANSION_CACHE[cache_key] = [dict(x) for x in res]
+    _IO_STATS["expansion_time"] += (time.perf_counter() - t_start)
+    return res
 
 
 def _discover_official_commercial_urls(fontes: List[Fonte]) -> List[Dict[str, Any]]:
@@ -716,26 +1184,6 @@ def descobrir_fontes_preco(fontes: List[Fonte], raw_results: Optional[List[Dict[
             auto_candidates.extend(_expand_commercial_domain(url, alvo, role, "descoberta comercial"))
             seen_raw.add(key)
 
-    # 0b) Busca comercial adicional usando Tavily, se disponível. Isso é propositalmente
-    # limitado para não explodir créditos.
-    if PRICE_AUTO_SEARCH_COMMERCIAL and tavily_client:
-        entities=[EMPRESA_ALVO]+[c for c in CONCORRENTES if c]
-        for ent in entities[:PRICE_COMMERCIAL_QUERY_LIMIT+1]:
-            queries=[
-                f'"{ent}" {CIDADE} site oficial comprar online',
-                f'"{ent}" {CIDADE} produtos ofertas preços',
-            ]
-            for q in queries[:PRICE_COMMERCIAL_QUERY_LIMIT]:
-                try:
-                    rr=tavily_client.search(query=q,max_results=5,search_depth="basic",include_answer=False)
-                    for x in rr.get("results",[]):
-                        url=str(x.get("url") or "").strip(); dom=source_domain_root(url)
-                        if not dom or _is_blocked_price_domain(url):
-                            continue
-                        role="target" if normalizar(ent)==normalizar(EMPRESA_ALVO) else "competitor"
-                        auto_candidates.extend(_expand_commercial_domain(url,ent,role,"busca comercial automática"))
-                except Exception as e:
-                    logger.warning("[PREÇOS AUTO SEARCH] %s", str(e)[:120])
     # 1) fontes com URLs claramente comerciais
     for f in fontes:
         if f.entidade and f.entidade not in {"mercado", ""} and is_price_candidate_url(f.url):
@@ -842,24 +1290,7 @@ def gerar_consultas() -> Dict[str, List[Tuple[str, str]]]:
 
 
 def buscar_tavily(client: Any, query: str, categoria: str) -> List[Dict[str, Any]]:
-    if not client:
-        return []
-    try:
-        r = client.search(query=query, max_results=5, search_depth="basic", include_answer=False)
-        return [
-            {
-                "titulo": x.get("title", ""),
-                "url": x.get("url", ""),
-                "conteudo": x.get("content", ""),
-                "origem": "Tavily",
-                "data_publicacao": x.get("published_date", "") or "",
-                "categoria": categoria,
-            }
-            for x in r.get("results", [])
-        ]
-    except Exception as e:
-        logger.warning("[TAVILY] %s", str(e)[:160])
-        return []
+    return _TAVILY_GUARD.search(client, query, categoria)
 
 
 def buscar_ddg(query: str, categoria: str) -> List[Dict[str, Any]]:
@@ -892,7 +1323,8 @@ def buscar_news_rss(query: str, categoria: str) -> List[Dict[str, Any]]:
         return []
     try:
         url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+        session = get_http_session()
+        r = session.get(url, timeout=15)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "xml")
         out = []
@@ -919,19 +1351,52 @@ def coletar_tudo(tavily_client: Any) -> List[Dict[str, Any]]:
     consultas = gerar_consultas()
     todas: List[Dict[str, Any]] = []
     max_por_grupo = int(os.getenv("MAX_CONSULTAS_POR_GRUPO", "5"))
+
+    tasks: List[Tuple[int, str, str, str]] = []
+    task_id = 0
     for grupo, itens in consultas.items():
         itens_exec = itens[:max_por_grupo]
         logger.info("[COLETA] %s | %d consultas", grupo, len(itens_exec))
         for q, alvo in itens_exec:
-            resultados = []
-            resultados.extend(buscar_tavily(tavily_client, q, grupo) if USAR_TAVILY else [])
+            tasks.append((task_id, grupo, q, alvo))
+            task_id += 1
+
+    _IO_STATS["discovery_tasks"] = len(tasks)
+    t_start = time.perf_counter()
+
+    def _exec_discovery_task(task: Tuple[int, str, str, str]) -> Tuple[int, List[Dict[str, Any]]]:
+        tid, grupo, q, alvo = task
+        resultados = []
+        try:
+            if USAR_TAVILY and tavily_client:
+                resultados.extend(buscar_tavily(tavily_client, q, grupo))
             resultados.extend(buscar_ddg(q, grupo))
             resultados.extend(buscar_news_rss(q, grupo))
             for r in resultados:
                 r["alvo"] = alvo
-            todas.extend(resultados)
-            time.sleep(float(os.getenv("PAUSA_BUSCA", "0.35")))
-    logger.info("[COLETA] %d resultados brutos", len(todas))
+        except Exception as e:
+            logger.warning("[DISCOVERY WORKER] %s | %s: %s", grupo, q[:60], str(e)[:120])
+        return tid, resultados
+
+    results_by_id: Dict[int, List[Dict[str, Any]]] = {}
+    if tasks:
+        with ThreadPoolExecutor(max_workers=DISCOVERY_MAX_WORKERS, thread_name_prefix="sniper-discovery") as executor:
+            future_to_task = {executor.submit(_exec_discovery_task, t): t[0] for t in tasks}
+            for future in concurrent.futures.as_completed(future_to_task):
+                try:
+                    tid, res = future.result()
+                    results_by_id[tid] = res
+                except Exception as e:
+                    tid = future_to_task[future]
+                    logger.warning("[DISCOVERY FUTURE] Tarefa %d falhou: %s", tid, str(e)[:120])
+                    results_by_id[tid] = []
+
+    # Reconstituição rigorosamente determinística na ordem original das tarefas
+    for tid, _, _, _ in tasks:
+        todas.extend(results_by_id.get(tid, []))
+
+    _IO_STATS["discovery_time"] = time.perf_counter() - t_start
+    logger.info("[COLETA] %d resultados brutos coletados em %.2fs (concorrência N=%d)", len(todas), _IO_STATS["discovery_time"], DISCOVERY_MAX_WORKERS)
     return todas
 
 # ============================================================
@@ -943,12 +1408,29 @@ DOMINIOS_PRIORITARIOS = {
     "reclameaqui.com.br": 0.95,
     "procon": 0.95,
     "g1.globo.com": 0.92,
-    "cidadeverde.com": 0.92,
-    "portalodia.com": 0.90,
-    "meionews.com": 0.88,
-    "mppi.mp.br": 0.98,
-    "gruporcarvalho.com.br": 0.85,
 }
+
+def dominios_oficiais_configurados() -> Set[str]:
+    """Deriva dinamicamente os domínios oficiais da empresa-alvo e concorrentes configurados."""
+    doms = set()
+    if EMPRESA_URL:
+        r = source_domain_root(EMPRESA_URL)
+        if r:
+            doms.add(r)
+    for u in PRECO_ALVO_URLS:
+        r = source_domain_root(u)
+        if r:
+            doms.add(r)
+    if PRECO_SOURCES_JSON:
+        try:
+            for item in json.loads(PRECO_SOURCES_JSON):
+                u = item.get("url") or item.get("search_url") or ""
+                r = source_domain_root(u)
+                if r:
+                    doms.add(r)
+        except Exception:
+            pass
+    return doms
 
 CIDADES_EXTERIORES = {
     "jundiai", "cubatao", "redmond", "washington", "new york", "california", "florida",
@@ -977,10 +1459,18 @@ def score_fonte(f: Fonte) -> float:
     elif f.escopo == "corporativo":
         s += 4
     d = f.dominio
-    for dom, peso in DOMINIOS_PRIORITARIOS.items():
-        if d == dom or dom in d:
-            s += 8 * peso
-            break
+    d_root = source_domain_root(f.url) or d
+
+    # 1. Bônus para domínio oficial da entidade configurada (dinâmico e multinicho)
+    doms_oficiais = dominios_oficiais_configurados()
+    if d in doms_oficiais or d_root in doms_oficiais:
+        s += 8 * 0.85
+    else:
+        # 2. Domínios de autoridade institucional / regulação / jornalismo geral
+        for dom, peso in DOMINIOS_PRIORITARIOS.items():
+            if d == dom or dom in d:
+                s += 8 * peso
+                break
     sinais = f.sinais
     s += min(10, 2 * len(sinais))
     return s
@@ -1100,9 +1590,10 @@ def deduplicar(fontes: List[Fonte]) -> List[Fonte]:
 # ============================================================
 
 def extrair_html(url: str) -> Dict[str, Any]:
-    r = requests.get(
+    session = get_http_session()
+    r = session.get(
         url,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "pt-BR,pt;q=0.9"},
+        headers={"Accept-Language": "pt-BR,pt;q=0.9"},
         timeout=REQUEST_TIMEOUT,
         allow_redirects=True,
     )
@@ -1113,22 +1604,7 @@ def extrair_html(url: str) -> Dict[str, Any]:
 def extrair_playwright(url: str) -> Optional[Dict[str, Any]]:
     if not PLAYWRIGHT_ATIVO:
         return None
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:
-        return None
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(user_agent=USER_AGENT, locale="pt-BR")
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            texto = page.locator("body").inner_text(timeout=12000)
-            out = {"conteudo": texto, "titulo": page.title(), "final_url": page.url, "data_publicacao": ""}
-            browser.close()
-            return out
-    except Exception as e:
-        logger.debug("[PW] %s", str(e)[:150])
-        return None
+    return _PLAYWRIGHT_MGR.extrair_pagina_playwright(url, timeout=30000)
 
 
 def extrair_pagina(url: str) -> Dict[str, Any]:
@@ -1176,9 +1652,39 @@ def extrair_pagina(url: str) -> Dict[str, Any]:
 
 def enriquecer(fontes: List[Fonte]) -> List[Fonte]:
     alvo = sorted(fontes, key=lambda x: x.score, reverse=True)[:MAX_ENRIQUECIMENTO]
-    for i, f in enumerate(alvo, 1):
-        logger.info("[EXTRAÇÃO %02d/%02d] %s", i, len(alvo), f.url)
-        dados = extrair_pagina(f.url)
+    if not alvo:
+        return []
+
+    _IO_STATS["enrich_tasks"] = len(alvo)
+    t_start = time.perf_counter()
+
+    def _exec_enrich_task(item: Tuple[int, str]) -> Tuple[int, Dict[str, Any]]:
+        idx, url = item
+        logger.info("[EXTRAÇÃO %02d/%02d] %s", idx + 1, len(alvo), url)
+        try:
+            dados = extrair_pagina(url)
+            return idx, dados
+        except Exception as e:
+            logger.debug("[ENRICH WORKER] %s: %s", url[:80], str(e)[:120])
+            return idx, {"titulo": "", "conteudo": "", "data_publicacao": "", "final_url": url, "direta": False}
+
+    tasks = [(i, f.url) for i, f in enumerate(alvo)]
+    results_by_idx: Dict[int, Dict[str, Any]] = {}
+
+    with ThreadPoolExecutor(max_workers=ENRICH_MAX_WORKERS, thread_name_prefix="sniper-enrich") as executor:
+        future_to_idx = {executor.submit(_exec_enrich_task, t): t[0] for t in tasks}
+        for future in concurrent.futures.as_completed(future_to_idx):
+            try:
+                idx, dados = future.result()
+                results_by_idx[idx] = dados
+            except Exception as e:
+                idx = future_to_idx[future]
+                logger.warning("[ENRICH FUTURE] Tarefa %d falhou: %s", idx, str(e)[:120])
+                results_by_idx[idx] = {}
+
+    # Aplicação sequencial rigorosamente determinística
+    for i, f in enumerate(alvo):
+        dados = results_by_idx.get(i, {})
         if not dados.get("conteudo"):
             continue
         old_snippet = f.resumo_busca
@@ -1205,7 +1711,9 @@ def enriquecer(fontes: List[Fonte]) -> List[Fonte]:
             f.escopo = "nacional"
         f.sinais = sinais_deterministicos(combined)
         f.score = score_fonte(f)
-        time.sleep(0.06)
+
+    _IO_STATS["enrich_time"] = time.perf_counter() - t_start
+    logger.info("[ENRIQUECIMENTO] %d fontes enriquecidas em %.2fs (concorrência N=%d)", len(alvo), _IO_STATS["enrich_time"], ENRICH_MAX_WORKERS)
 
     for i, f in enumerate(sorted(fontes, key=lambda x: x.score, reverse=True), 1):
         f.id = i
@@ -1363,7 +1871,8 @@ def _price_page_html(url: str, use_playwright: bool = True) -> Tuple[str, str]:
         return "", url
     _PRICE_FETCH_COUNT += 1
     try:
-        r = requests.get(key, headers={"User-Agent": USER_AGENT}, timeout=min(REQUEST_TIMEOUT, 12), allow_redirects=True)
+        session = get_http_session()
+        r = session.get(key, timeout=min(REQUEST_TIMEOUT, 12), allow_redirects=True)
         if r.ok and "html" in (r.headers.get("content-type") or "").lower() and len(r.text) > 1000:
             _PRICE_HTTP_CACHE[key]=(r.text, r.url, time.time())
             return r.text, r.url
@@ -1374,24 +1883,11 @@ def _price_page_html(url: str, use_playwright: bool = True) -> Tuple[str, str]:
         return "", key
     if _commercial_signal_url(key) < 0.55 or _is_non_commercial_url(key):
         return "", key
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(user_agent=USER_AGENT, locale="pt-BR")
-            page.goto(key, wait_until="domcontentloaded", timeout=PRICE_PLAYWRIGHT_TIMEOUT)
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            html = page.content()
-            final_url = page.url
-            browser.close()
-            _PRICE_HTTP_CACHE[key]=(html,final_url,time.time())
-            return html, final_url
-    except Exception as e:
-        logger.warning("[PREÇO PLAYWRIGHT] %s", str(e)[:160])
-        return "", key
+    html, final_url = _PLAYWRIGHT_MGR.extrair_html_preco(key, timeout=PRICE_PLAYWRIGHT_TIMEOUT)
+    if html:
+        _PRICE_HTTP_CACHE[key] = (html, final_url, time.time())
+        return html, final_url
+    return "", key
 
 
 def _buscar_preco_site(url_template: str, query: str) -> str:
@@ -1490,51 +1986,9 @@ def coletar_itens_preco_fonte(source: Dict[str, Any], query: str = "") -> List[P
 
 def _playwright_session_search(base_url: str, search_url_template: str, queries: List[str], location_hint: str = "") -> Dict[str, List[PriceItem]]:
     """Mantém uma única sessão Chromium por concorrente para preservar cookies/localização."""
-    results: Dict[str, List[PriceItem]] = {}
     if not PRECO_USAR_PLAYWRIGHT:
-        return results
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:
-        return results
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(user_agent=USER_AGENT, locale="pt-BR")
-            page = context.new_page()
-            page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=12000)
-            except Exception:
-                pass
-            page.wait_for_timeout(1000)
-            base_text = page.locator("body").inner_text(timeout=12000) if page.locator("body") else ""
-            location_confirmed = bool(CIDADE and normalizar(CIDADE) in normalizar(base_text))
-            for query in queries:
-                try:
-                    target_url = _buscar_preco_site(search_url_template, query)
-                    page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=10000)
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(1200)
-                    html = page.content()
-                    final_url = page.url
-                    note = location_hint
-                    if location_confirmed:
-                        note = (note + " | localização confirmada no contexto da sessão: " + CIDADE + ").").strip(" |")
-                    items = _extract_product_objects(html, "", "competitor", final_url, note)
-                    for item in items:
-                        item.location_note = note
-                    results[query] = items[:PRECO_MAX_RESULTADOS_POR_BUSCA]
-                except Exception as e:
-                    logger.warning("[PREÇOS SESSION] busca '%s': %s", query[:80], str(e)[:120])
-                    results[query] = []
-            browser.close()
-    except Exception as e:
-        logger.warning("[PREÇOS SESSION] falhou: %s", str(e)[:160])
-    return results
+        return {}
+    return _PLAYWRIGHT_MGR.session_search(base_url, search_url_template, queries, location_hint)
 
 
 def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None, raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> Dict[str, Any]:
@@ -2218,97 +2672,143 @@ def main() -> None:
     logger.info("Empresa=%s | Nicho=%s | Local=%s-%s", EMPRESA_ALVO, NICHO, CIDADE, ESTADO)
     logger.info("=" * 90)
 
-    tavily_client = inicializar_tavily()
-    brutas = coletar_tudo(tavily_client)
-    if not brutas:
-        logger.error("[FATAL] Nenhuma busca retornou resultado.")
-        return
+    try:
+        tavily_client = inicializar_tavily()
+        brutas = coletar_tudo(tavily_client)
+        if not brutas:
+            logger.error("[FATAL] Nenhuma busca retornou resultado.")
+            return
 
-    fontes = []
-    for i, raw in enumerate(brutas, 1):
-        f = transformar(raw, i)
-        if f:
-            fontes.append(f)
-    fontes = deduplicar(fontes)
-    if not fontes:
-        logger.error("[FATAL] Nenhuma fonte passou por identidade/localização/data.")
-        return
+        fontes = []
+        for i, raw in enumerate(brutas, 1):
+            f = transformar(raw, i)
+            if f:
+                fontes.append(f)
+        fontes = deduplicar(fontes)
+        if not fontes:
+            logger.error("[FATAL] Nenhuma fonte passou por identidade/localização/data.")
+            return
 
-    fontes = enriquecer(fontes)
-    for i, f in enumerate(fontes, 1):
-        f.id = i
+        fontes = enriquecer(fontes)
+        for i, f in enumerate(fontes, 1):
+            f.id = i
 
-    events = criar_eventos(fontes)
-    dimensoes = medir_dimensoes(fontes, events)
-    ambiente = score_ambiente_competitivo(dimensoes)
-    ambiente["dimensoes"] = dimensoes
-    ambiente["momentum_mercado"] = score_momentum(events, fontes)
-    ambiente["pressao_competitiva"] = score_pressao_competitiva(fontes, events)
-    ambiente["vulnerabilidade_empresa"] = score_vulnerabilidade_empresa(events)
+        events = criar_eventos(fontes)
+        dimensoes = medir_dimensoes(fontes, events)
+        ambiente = score_ambiente_competitivo(dimensoes)
+        ambiente["dimensoes"] = dimensoes
+        ambiente["momentum_mercado"] = score_momentum(events, fontes)
+        ambiente["pressao_competitiva"] = score_pressao_competitiva(fontes, events)
+        ambiente["vulnerabilidade_empresa"] = score_vulnerabilidade_empresa(events)
 
-    memoria = MemoriaSniper(DB_PATH)
-    comparacao_precos = comparar_precos(fontes, memoria, raw_results=brutas, tavily_client=tavily_client)
-    ambiente["comparacao_precos"] = comparacao_precos
-    memoria_stats = memoria.save_run(RUN_ID, fontes, events)
+        memoria = MemoriaSniper(DB_PATH)
+        comparacao_precos = comparar_precos(fontes, memoria, raw_results=brutas, tavily_client=tavily_client)
+        ambiente["comparacao_precos"] = comparacao_precos
+        memoria_stats = memoria.save_run(RUN_ID, fontes, events)
 
-    pacote = inteligencia_deterministica(fontes, events, ambiente)
-    llm = gerar_inteligencia_llm(fontes, events, ambiente)
-    if llm:
-        base = inteligencia_deterministica(fontes, events, ambiente)
-        # O LLM complementa; nunca substitui os sinais determinísticos.
-        for k, v in llm.items():
-            if v not in (None, "", []):
-                base[k] = v
-        pacote = base
-        pacote["fonte_inteligencia"] = "determinístico + LLM"
-    else:
-        pacote["fonte_inteligencia"] = "determinístico"
+        pacote = inteligencia_deterministica(fontes, events, ambiente)
+        llm = gerar_inteligencia_llm(fontes, events, ambiente)
+        if llm:
+            base = inteligencia_deterministica(fontes, events, ambiente)
+            # O LLM complementa; nunca substitui os sinais determinísticos.
+            for k, v in llm.items():
+                if v not in (None, "", []):
+                    base[k] = v
+            pacote = base
+            pacote["fonte_inteligencia"] = "determinístico + LLM"
+        else:
+            pacote["fonte_inteligencia"] = "determinístico"
 
-    validacao = validar_pacote(pacote, fontes)
-    pacote["validacao"] = validacao
-    pacote["ambiente_competitivo"] = ambiente
-    pacote["comparacao_precos"] = comparacao_precos
-    pacote["memoria"] = memoria_stats
+        validacao = validar_pacote(pacote, fontes)
+        pacote["validacao"] = validacao
+        pacote["ambiente_competitivo"] = ambiente
+        pacote["comparacao_precos"] = comparacao_precos
+        pacote["memoria"] = memoria_stats
 
-    fmap = fonte_por_id(fontes)
-    for s in pacote.get("sinais", []):
-        s["citacao"] = ref_text([i for i in s.get("evidence_ids", []) if i in fmap])
+        fmap = fonte_por_id(fontes)
+        for s in pacote.get("sinais", []):
+            s["citacao"] = ref_text([i for i in s.get("evidence_ids", []) if i in fmap])
 
-    metricas = {
-        "versao": APP_VERSION, "run_id": RUN_ID, "empresa": EMPRESA_ALVO, "nicho": NICHO,
-        "local": f"{CIDADE}-{ESTADO}" if CIDADE else ESTADO,
-        "fontes_brutas": len(brutas), "fontes_finais": len(fontes),
-        "fontes_atuais": sum(1 for f in fontes if f.atual), "fontes_com_data": sum(1 for f in fontes if f.data_publicacao),
-        "fontes_locais": sum(1 for f in fontes if f.escopo == "local"), "eventos": len(events),
-        "ambiente_competitivo": ambiente, "pressao_competitiva": ambiente.get("pressao_competitiva"), "vulnerabilidade_empresa": ambiente.get("vulnerabilidade_empresa"), "comparacao_precos": comparacao_precos, "memoria": memoria_stats,
-        "tempo_segundos": round(time.time() - inicio, 2),
-    }
+        metricas = {
+            "versao": APP_VERSION, "run_id": RUN_ID, "empresa": EMPRESA_ALVO, "nicho": NICHO,
+            "local": f"{CIDADE}-{ESTADO}" if CIDADE else ESTADO,
+            "fontes_brutas": len(brutas), "fontes_finais": len(fontes),
+            "fontes_atuais": sum(1 for f in fontes if f.atual), "fontes_com_data": sum(1 for f in fontes if f.data_publicacao),
+            "fontes_locais": sum(1 for f in fontes if f.escopo == "local"), "eventos": len(events),
+            "ambiente_competitivo": ambiente, "pressao_competitiva": ambiente.get("pressao_competitiva"), "vulnerabilidade_empresa": ambiente.get("vulnerabilidade_empresa"), "comparacao_precos": comparacao_precos, "memoria": memoria_stats,
+            "tempo_segundos": round(time.time() - inicio, 2),
+        }
 
-    html = gerar_html(pacote, fontes, events, ambiente, memoria_stats)
-    html_path = PASTA_EXECUCAO / "dashboard.html"
-    html_path.write_text(html, encoding="utf-8")
-    pdf_path = gerar_pdf(pacote, fontes, events, ambiente, memoria_stats)
+        html = gerar_html(pacote, fontes, events, ambiente, memoria_stats)
+        html_path = PASTA_EXECUCAO / "dashboard.html"
+        html_path.write_text(html, encoding="utf-8")
+        pdf_path = gerar_pdf(pacote, fontes, events, ambiente, memoria_stats)
 
-    json_paths = {
-        "pacote": salvar_json("inteligencia.json", pacote),
-        "fontes": salvar_json("fontes.json", [asdict(f) for f in fontes]),
-        "eventos": salvar_json("eventos.json", events),
-        "comparacao_precos": salvar_json("comparacao_precos.json", comparacao_precos),
-        "metricas": salvar_json("metricas.json", metricas),
-    }
-    csv_path = salvar_csv_fontes(fontes)
-    resumo = {"versao": APP_VERSION, "run_id": RUN_ID, "dashboard_html": str(html_path.resolve()), "pdf": pdf_path, "arquivos": json_paths, "csv": csv_path}
-    salvar_json("execucao.json", resumo)
+        json_paths = {
+            "pacote": salvar_json("inteligencia.json", pacote),
+            "fontes": salvar_json("fontes.json", [asdict(f) for f in fontes]),
+            "eventos": salvar_json("eventos.json", events),
+            "comparacao_precos": salvar_json("comparacao_precos.json", comparacao_precos),
+            "metricas": salvar_json("metricas.json", metricas),
+        }
+        csv_path = salvar_csv_fontes(fontes)
+        resumo = {"versao": APP_VERSION, "run_id": RUN_ID, "dashboard_html": str(html_path.resolve()), "pdf": pdf_path, "arquivos": json_paths, "csv": csv_path}
+        salvar_json("execucao.json", resumo)
 
-    logger.info("=" * 90)
-    logger.info("EXECUÇÃO CONCLUÍDA em %.1fs", time.time() - inicio)
-    logger.info("Dashboard: %s", html_path.resolve())
-    logger.info("PDF: %s", pdf_path or "não gerado")
-    pressao_txt = ambiente.get("pressao_competitiva", {}).get("score")
-    cp = comparacao_precos
-    logger.info("Preços: %s | comparáveis=%s | alvo_mais_barato=%s | concorrente_mais_barato=%s | snapshots=%s | mudanças=%s", cp.get("status"), cp.get("comparaveis", 0), cp.get("alvo_mais_barato", 0), cp.get("concorrente_mais_barato", 0), cp.get("snapshots_observados", 0), len(cp.get("historico", {}).get("mudancas", [])))
-    logger.info("Fontes: %d | Eventos: %d | Atividade empresa: %d/100 | Pressão competitiva: %s | Momentum: %d/100 | Vulnerabilidade: %d/100", len(fontes), len(events), ambiente["score"], pressao_txt if pressao_txt is not None else "N/C", ambiente["momentum_mercado"], ambiente["vulnerabilidade_empresa"]["score"])
-    logger.info("=" * 90)
+        logger.info(
+            "[IO METRICS] Discovery: %.2fs (N=%d, %d tarefas) | Enrich: %.2fs (N=%d, %d tarefas) | Probes: %d (Cache hits: %d) | Sitemaps pulados: %d | HTTP 200: %d, 403: %d, 429: %d, Timeouts: %d | HTTP reqs: %d (tempo: %.2fs) | Probing total: %.2fs | Domínios únicos: %d",
+            _IO_STATS["discovery_time"],
+            _IO_STATS["discovery_workers"],
+            _IO_STATS["discovery_tasks"],
+            _IO_STATS["enrich_time"],
+            _IO_STATS["enrich_workers"],
+            _IO_STATS["enrich_tasks"],
+            _IO_STATS["domain_probes"],
+            _IO_STATS["probes_cache_hit"],
+            _IO_STATS["sitemaps_skipped"],
+            _IO_STATS["http_200"],
+            _IO_STATS["http_403"],
+            _IO_STATS["http_429"],
+            _IO_STATS["http_timeouts"],
+            _IO_STATS["http_requests"],
+            _IO_STATS["http_time"],
+            _IO_STATS["expansion_time"],
+            len(_IO_STATS["unique_domains"]),
+        )
+        logger.info(
+            "[PLAYWRIGHT METRICS] Launches: %d | Contexts: %d | Pages: %d (fechadas: %d) | Startup: %.2fs | Nav: %.2fs | Render: %.2fs | Ok: %d | Falhas: %d | Timeouts: %d",
+            _PLAYWRIGHT_MGR.launch_count,
+            _PLAYWRIGHT_MGR.contexts_created,
+            _PLAYWRIGHT_MGR.pages_created,
+            _PLAYWRIGHT_MGR.pages_closed,
+            _PLAYWRIGHT_MGR.startup_time,
+            _PLAYWRIGHT_MGR.navigation_time,
+            _PLAYWRIGHT_MGR.render_time,
+            _PLAYWRIGHT_MGR.success_count,
+            _PLAYWRIGHT_MGR.fail_count,
+            _PLAYWRIGHT_MGR.timeout_count,
+        )
+        logger.info(
+            "[TAVILY METRICS] Tentativas: %d | Executadas: %d (Créditos estimados: %d) | Bloqueadas por Budget: %d | Cache hits: %d | Circuit Breaker aberto: %s | Falhas: %d",
+            _TAVILY_GUARD.queries_attempted,
+            _TAVILY_GUARD.queries_executed,
+            _TAVILY_GUARD.estimated_credits_used,
+            _TAVILY_GUARD.queries_blocked_budget,
+            _TAVILY_GUARD.cache_hits,
+            _TAVILY_GUARD.circuit_open,
+            _TAVILY_GUARD.failures,
+        )
+        logger.info("=" * 90)
+        logger.info("EXECUÇÃO CONCLUÍDA em %.1fs", time.time() - inicio)
+        logger.info("Dashboard: %s", html_path.resolve())
+        logger.info("PDF: %s", pdf_path or "não gerado")
+        pressao_txt = ambiente.get("pressao_competitiva", {}).get("score")
+        cp = comparacao_precos
+        logger.info("Preços: %s | comparáveis=%s | alvo_mais_barato=%s | concorrente_mais_barato=%s | snapshots=%s | mudanças=%s", cp.get("status"), cp.get("comparaveis", 0), cp.get("alvo_mais_barato", 0), cp.get("concorrente_mais_barato", 0), cp.get("snapshots_observados", 0), len(cp.get("historico", {}).get("mudancas", [])))
+        logger.info("Fontes: %d | Eventos: %d | Atividade empresa: %d/100 | Pressão competitiva: %s | Momentum: %d/100 | Vulnerabilidade: %d/100", len(fontes), len(events), ambiente["score"], pressao_txt if pressao_txt is not None else "N/C", ambiente["momentum_mercado"], ambiente["vulnerabilidade_empresa"]["score"])
+        logger.info("=" * 90)
+    finally:
+        _PLAYWRIGHT_MGR.close_all()
 
 if __name__ == "__main__":
     main()
