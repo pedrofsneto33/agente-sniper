@@ -82,7 +82,9 @@ class BoundingBox:
         """Distância euclidiana entre os centros das duas caixas."""
         if other is None:
             return float("inf")
-        return math.hypot(self.centro_x - other.centro_x, self.centro_y - other.centro_y)
+        dx = (self.x_min + self.x_max - other.x_min - other.x_max) * 0.5
+        dy = (self.y_min + self.y_max - other.y_min - other.y_max) * 0.5
+        return math.hypot(dx, dy)
 
     def expand(self, other: Optional["BoundingBox"]) -> "BoundingBox":
         """Retorna uma nova caixa que envolve ambas as caixas."""
@@ -136,7 +138,8 @@ class SpatialToken:
 
     @property
     def has_geometry(self) -> bool:
-        return self.bbox is not None and self.bbox.is_valid
+        b = self.bbox
+        return b is not None and ((b.x_max > b.x_min) or (b.y_max > b.y_min))
 
     def to_dict(self) -> Dict[str, Any]:
         return {

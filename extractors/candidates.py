@@ -5,6 +5,7 @@ Suporta regras plugáveis para múltiplos domínios: Moeda, Processo Judicial, P
 """
 
 from abc import ABC, abstractmethod
+import math
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from extractors.models import BoundingBox, SpatialToken, CandidateAnchor, RawSpatialDocument, AnchorEvidenceKind, AnchorRole
@@ -66,6 +67,9 @@ class StrictCurrencyRule(CandidateRule):
 
     def detect(self, tokens: Sequence[SpatialToken], document: RawSpatialDocument) -> List[CandidateAnchor]:
         ancoras: List[CandidateAnchor] = []
+        n_tokens = len(tokens)
+        if n_tokens == 0:
+            return ancoras
 
         w_doc, h_doc = document.dimensoes if document and document.dimensoes else (2000.0, 3000.0)
         if w_doc <= 1.0:
@@ -76,70 +80,118 @@ class StrictCurrencyRule(CandidateRule):
         dist_max_px = 0.060 * w_doc
         dy_max_px = 0.015 * h_doc
 
+        # Pass 1: Pré-computa atributos com pré-filtros rápidos O(1)
+        token_info = []
         for idx, token in enumerate(tokens):
             texto = token.texto.strip()
+            bbox = token.bbox
+            has_geom = token.has_geometry and bbox is not None
+            if has_geom:
+                cx, cy, ymin, ymax = bbox.centro_x, bbox.centro_y, bbox.y_min, bbox.y_max
+            else:
+                cx, cy, ymin, ymax = 0.0, 0.0, 0.0, 0.0
 
-            # 1. Identificação do tipo de evidência monetária no próprio token
-            tem_simbolo_moeda = bool(self._re_simbolo_moeda.search(texto))
-            match_cadencia = self._re_cadencia.search(texto)
-            tem_cadencia = bool(match_cadencia)
-            cadencia_str = match_cadencia.group(0).strip() if match_cadencia else None
+            # Fast check para símbolo de moeda
+            if '$' in texto or '€' in texto or '£' in texto:
+                m_sym = bool(self._re_simbolo_moeda.search(texto))
+            else:
+                m_sym = False
 
-            # Papel relacional no próprio token (ex: "De R$ 100,00" ou "Por R$ 79,90")
-            tem_marcador_old = bool(self._re_old_price_token.match(texto) or self._re_old_price_inline.search(texto))
-            tem_marcador_curr = bool(self._re_current_price_token.match(texto) or self._re_current_price_inline.search(texto))
+            # Cadência
+            m_cad = self._re_cadencia.search(texto)
+            cad_str = m_cad.group(0).strip() if m_cad else None
+
+            # Fast check para marcadores de preço antigo e atual
+            t_lower = texto.lower()
+            if 'de' in t_lower or 'antes' in t_lower or 'era' in t_lower or 'antigo' in t_lower or 'normal' in t_lower:
+                m_old = bool(self._re_old_price_token.match(texto) or self._re_old_price_inline.search(texto))
+            else:
+                m_old = False
+
+            if 'por' in t_lower or 'agora' in t_lower or 'oferta' in t_lower or 'promocional' in t_lower or 'pague' in t_lower or 'promo' in t_lower:
+                m_curr = bool(self._re_current_price_token.match(texto) or self._re_current_price_inline.search(texto))
+            else:
+                m_curr = False
+
+            has_digit = any(c.isdigit() for c in texto)
+
+            token_info.append((
+                token, texto, bbox, has_geom, cx, cy, ymin, ymax,
+                m_sym, bool(m_cad), cad_str, m_old, m_curr, has_digit
+            ))
+
+        # Pass 2: Detecção de âncoras com busca de vizinhança sem reavaliação de regex
+        for idx in range(n_tokens):
+            (token, texto, bbox, has_geom, cx, cy, ymin, ymax,
+             tem_simbolo_moeda, tem_cadencia, cadencia_str,
+             tem_marcador_old, tem_marcador_curr, has_digit) = token_info[idx]
+
+            # Descarte imediato O(1): se o token não possui dígitos, não pode ser âncora de preço
+            if not has_digit:
+                continue
 
             # 2. Contexto vizinho imediato e espacial 2D (mesma linha na janela local)
-            vizinhos_a_checar = []
             inicio_janela = max(0, idx - 15)
-            fim_janela = min(len(tokens), idx + 16)
+            fim_janela = min(n_tokens, idx + 16)
 
-            if token.has_geometry and token.bbox:
+            if has_geom:
                 for v_idx in range(inicio_janela, fim_janela):
                     if v_idx == idx:
                         continue
-                    v = tokens[v_idx]
-                    if v.has_geometry and v.bbox:
-                        if token.bbox.distance_to(v.bbox) <= dist_max_px and abs(token.bbox.centro_y - v.bbox.centro_y) <= dy_max_px:
-                            vizinhos_a_checar.append(v)
+                    v_info = token_info[v_idx]
+                    if v_info[3]:  # v has_geom
+                        v_dy = cy - v_info[5]
+                        if v_dy < 0.0:
+                            v_dy = -v_dy
+                        if v_dy <= dy_max_px:
+                            d = math.hypot(cx - v_info[4], cy - v_info[5])
+                            if d <= dist_max_px:
+                                if not tem_simbolo_moeda and v_info[8]:  # v m_sym
+                                    tem_simbolo_moeda = True
+                                if not tem_cadencia and v_info[9]:      # v has_cad
+                                    tem_cadencia = True
+                                    cadencia_str = v_info[10]
             else:
                 if idx > 0:
-                    vizinhos_a_checar.append(tokens[idx - 1])
-                if idx + 1 < len(tokens):
-                    vizinhos_a_checar.append(tokens[idx + 1])
-
-            for v in vizinhos_a_checar:
-                v_txt = v.texto.strip()
-                dist_ok = True
-                if token.has_geometry and v.has_geometry and token.bbox and v.bbox:
-                    dist_ok = token.bbox.distance_to(v.bbox) <= dist_max_px
-
-                if dist_ok:
-                    if not tem_simbolo_moeda and self._re_simbolo_moeda.search(v_txt):
+                    v_info = token_info[idx - 1]
+                    if not tem_simbolo_moeda and v_info[8]:
                         tem_simbolo_moeda = True
-                    if not tem_cadencia:
-                        m_cad = self._re_cadencia.search(v_txt)
-                        if m_cad:
-                            tem_cadencia = True
-                            cadencia_str = m_cad.group(0).strip()
+                    if not tem_cadencia and v_info[9]:
+                        tem_cadencia = True
+                        cadencia_str = v_info[10]
+                if idx + 1 < n_tokens:
+                    v_info = token_info[idx + 1]
+                    if not tem_simbolo_moeda and v_info[8]:
+                        tem_simbolo_moeda = True
+                    if not tem_cadencia and v_info[9]:
+                        tem_cadencia = True
+                        cadencia_str = v_info[10]
 
             # Se o próprio token não tiver marcador, checa tokens precedentes imediatos (v_idx < idx) na mesma linha
             if not (tem_marcador_old or tem_marcador_curr):
                 inicio_precedentes = max(0, idx - 5)
                 for v_idx in range(inicio_precedentes, idx):
-                    v = tokens[v_idx]
-                    v_txt = v.texto.strip()
+                    v_info = token_info[v_idx]
                     dist_ok = True
-                    if token.has_geometry and v.has_geometry and token.bbox and v.bbox:
-                        y_overlap = max(0.0, min(token.bbox.y_max, v.bbox.y_max) - max(token.bbox.y_min, v.bbox.y_min))
-                        dist_ok = (y_overlap > 0.0) and (token.bbox.distance_to(v.bbox) <= dist_max_px or idx - v_idx <= 2)
+                    if has_geom and v_info[3]:
+                        y_top = ymin if ymin >= v_info[6] else v_info[6]
+                        y_bot = ymax if ymax <= v_info[7] else v_info[7]
+                        y_overlap = (y_bot - y_top) if (y_bot > y_top) else 0.0
+                        d = math.hypot(cx - v_info[4], cy - v_info[5])
+                        dist_ok = (y_overlap > 0.0) and (d <= dist_max_px or idx - v_idx <= 2)
+
                     if dist_ok:
-                        if self._re_old_price_token.match(v_txt) or self._re_old_price_inline.search(v_txt):
+                        if v_info[11]:  # v m_old
                             tem_marcador_old = True
-                        if self._re_current_price_token.match(v_txt) or self._re_current_price_inline.search(v_txt):
+                        if v_info[12]:  # v m_curr
                             tem_marcador_curr = True
 
-            # Rejeição de unidades isoladas, percentuais, datas e identificadores
+            # 3. Busca padrão de preço FIRST (evita executar regexes de rejeição em tokens que nem são preços)
+            match = self._re_preco_padrao.search(texto)
+            if not match:
+                continue
+
+            # Rejeição de unidades isoladas, percentuais, datas e identificadores (apenas se match de preço passou)
             if not tem_simbolo_moeda and not tem_cadencia:
                 if self._re_unidades_medida.search(texto):
                     continue
@@ -147,11 +199,6 @@ class StrictCurrencyRule(CandidateRule):
                     continue
                 if self._re_nao_moeda.search(texto):
                     continue
-
-            # 3. Busca padrão de preço
-            match = self._re_preco_padrao.search(texto)
-            if not match:
-                continue
 
             raw_str = match.group(1)
             if "." in raw_str and "," in raw_str:
@@ -168,11 +215,12 @@ class StrictCurrencyRule(CandidateRule):
 
             # 4. Contexto vizinho: verificar se o token posterior é uma unidade de medida
             tem_sufixo_medida_vizinho = False
-            if idx + 1 < len(tokens):
-                proximo_texto = tokens[idx + 1].texto.strip().lower()
+            if idx + 1 < n_tokens:
+                proximo_texto = token_info[idx + 1][1].lower()
                 if proximo_texto in {"g", "kg", "mg", "ml", "l", "litro", "litros", "sachê", "sache", "sachês", "saches", "un", "unidades", "cm", "mm", "%"}:
-                    if token.has_geometry and tokens[idx + 1].has_geometry and token.bbox and tokens[idx + 1].bbox:
-                        if token.bbox.distance_to(tokens[idx + 1].bbox) < dist_max_px:
+                    if has_geom and token_info[idx + 1][3]:
+                        d = math.hypot(cx - token_info[idx + 1][4], cy - token_info[idx + 1][5])
+                        if d < dist_max_px:
                             tem_sufixo_medida_vizinho = True
                     else:
                         tem_sufixo_medida_vizinho = True

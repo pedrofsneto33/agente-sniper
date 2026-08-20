@@ -74,6 +74,7 @@ def clusterizar_espacialmente(
     max_dx_padrao_px = max_distancia_horizontal_rel * largura_doc
     max_dy_px = max_distancia_vertical_rel * altura_doc
     max_dx_linha_px = 0.88 * largura_doc
+    min_altura_linha_ref = 0.015 * altura_doc
 
     regioes: List[EvidenceRegion] = [
         EvidenceRegion(
@@ -89,90 +90,129 @@ def clusterizar_espacialmente(
     ids_ancoras = {a.token_ref.id_token for a in ancoras if a.token_ref.id_token is not None}
     tokens_atribuidos = set()
 
+    # Pré-computa geometria somente das âncoras válidas
+    ancoras_geom = []
+    for reg in regioes:
+        ancora = reg.ancora
+        if ancora and ancora.bbox:
+            abox = ancora.bbox
+            ancoras_geom.append((
+                reg,
+                abox.centro_x,
+                abox.centro_y,
+                abox.y_min,
+                abox.y_max,
+                abox.altura
+            ))
+
     for token in documento.tokens:
-        if token.id_token in ids_ancoras:
+        t_id = token.id_token
+        if t_id in ids_ancoras:
             continue
 
-        if not token.has_geometry or token.bbox is None:
+        tbox = token.bbox
+        if not token.has_geometry or tbox is None:
             continue
+
+        t_text = token.texto
+        t_cx = tbox.centro_x
+        t_cy = tbox.centro_y
+        t_ymin = tbox.y_min
+        t_ymax = tbox.y_max
+        t_altura = tbox.altura
 
         melhor_regiao: Optional[EvidenceRegion] = None
-        menor_distancia = float("inf")
+        menor_distancia_sq = float("inf")
 
-        for reg in regioes:
-            ancora = reg.ancora
-            if not ancora or not ancora.bbox:
+        for reg, a_cx, a_cy, a_ymin, a_ymax, a_altura in ancoras_geom:
+            # Early-Exit Vertical (Alteração A + Inlining de abs - Alteração B)
+            dy = (t_cy - a_cy) if t_cy >= a_cy else (a_cy - t_cy)
+            if dy > max_dy_px:
+                dx = (t_cx - a_cx) if t_cx >= a_cx else (a_cx - t_cx)
+                reg.tokens_rejeitados.append({
+                    "token_id": t_id,
+                    "texto": t_text,
+                    "motivo": f"distancia_excessiva_dx_{dx:.1f}_dy_{dy:.1f}"
+                })
                 continue
 
-            ancora_box = ancora.bbox
-            dx = abs(token.bbox.centro_x - ancora_box.centro_x)
-            dy = abs(token.bbox.centro_y - ancora_box.centro_y)
+            dx = (t_cx - a_cx) if t_cx >= a_cx else (a_cx - t_cx)
 
-            # Verificação de mesma linha (sobreposição vertical positiva ou dy compatível com altura da linha)
-            y_overlap = max(0.0, min(token.bbox.y_max, ancora_box.y_max) - max(token.bbox.y_min, ancora_box.y_min))
-            altura_linha_ref = max(token.bbox.altura, ancora_box.altura, 0.015 * altura_doc)
+            # Inlining de min/max para sobreposição vertical e altura de linha (Alteração C)
+            y_top = t_ymin if t_ymin >= a_ymin else a_ymin
+            y_bot = t_ymax if t_ymax <= a_ymax else a_ymax
+            y_diff = y_bot - y_top
+            y_overlap = y_diff if y_diff > 0.0 else 0.0
+
+            h_max = t_altura if t_altura >= a_altura else a_altura
+            altura_linha_ref = h_max if h_max >= min_altura_linha_ref else min_altura_linha_ref
             is_same_line = (y_overlap > 0.0) or (dy <= altura_linha_ref * 0.8)
 
             # Tolerância horizontal adaptativa à linha (em leitura ocidental, descrições tabulares precedem o preço à esquerda)
-            is_preceding_left = (token.bbox.centro_x <= ancora_box.centro_x + 20.0)
+            is_preceding_left = (t_cx <= a_cx + 20.0)
             max_dx_permitido = max_dx_linha_px if (is_same_line and is_preceding_left) else max_dx_padrao_px
 
             # Verificação de limites máximos
-            if dx > max_dx_permitido or dy > max_dy_px:
+            if dx > max_dx_permitido:
                 reg.tokens_rejeitados.append({
-                    "token_id": token.id_token,
-                    "texto": token.texto,
+                    "token_id": t_id,
+                    "texto": t_text,
                     "motivo": f"distancia_excessiva_dx_{dx:.1f}_dy_{dy:.1f}"
                 })
                 continue
 
             # Verificação de âncora intermediária bloqueante na mesma linha
             if is_same_line and dx > max_dx_padrao_px:
-                x_min_seg = min(token.bbox.centro_x, ancora_box.centro_x)
-                x_max_seg = max(token.bbox.centro_x, ancora_box.centro_x)
+                x_min_seg = t_cx if t_cx <= a_cx else a_cx
+                x_max_seg = t_cx if t_cx >= a_cx else a_cx
                 tem_ancora_intermediaria = False
-                for outra_reg in regioes:
+                for outra_reg, o_cx, o_cy, o_ymin, o_ymax, o_altura in ancoras_geom:
                     if outra_reg is reg:
                         continue
-                    outra_ancora = outra_reg.ancora
-                    if not outra_ancora or not outra_ancora.bbox:
-                        continue
-                    o_box = outra_ancora.bbox
-                    o_y_overlap = max(0.0, min(token.bbox.y_max, o_box.y_max) - max(token.bbox.y_min, o_box.y_min))
-                    o_is_same_line = (o_y_overlap > 0.0) or (abs(token.bbox.centro_y - o_box.centro_y) <= altura_linha_ref * 0.8)
-                    if o_is_same_line and (x_min_seg + 10.0 < o_box.centro_x < x_max_seg - 10.0):
+                    o_top = t_ymin if t_ymin >= o_ymin else o_ymin
+                    o_bot = t_ymax if t_ymax <= o_ymax else o_ymax
+                    o_diff = o_bot - o_top
+                    o_y_overlap = o_diff if o_diff > 0.0 else 0.0
+                    o_dy = (t_cy - o_cy) if t_cy >= o_cy else (o_cy - t_cy)
+                    o_is_same_line = (o_y_overlap > 0.0) or (o_dy <= altura_linha_ref * 0.8)
+                    if o_is_same_line and (x_min_seg + 10.0 < o_cx < x_max_seg - 10.0):
                         tem_ancora_intermediaria = True
                         break
                 if tem_ancora_intermediaria:
                     reg.tokens_rejeitados.append({
-                        "token_id": token.id_token,
-                        "texto": token.texto,
+                        "token_id": t_id,
+                        "texto": t_text,
                         "motivo": "ancora_intermediaria_bloqueante"
                     })
                     continue
 
-            # Cálculo da distância ponderada
+            # Cálculo da distância ponderada quadrada (inlined sem chamada math.hypot)
             if is_same_line and is_preceding_left:
-                dist_ponderada = math.hypot(dx * 0.45, dy * 3.0)
+                w_dx = dx * 0.45
+                w_dy = dy * 3.0
             elif is_same_line:
-                dist_ponderada = math.hypot(dx * 1.8, dy * 2.0)
+                w_dx = dx * 1.8
+                w_dy = dy * 2.0
             else:
-                fator_vertical = 1.0 if token.bbox.centro_y <= ancora_box.centro_y else 2.0
-                dist_ponderada = math.hypot(dx * 1.6, dy * fator_vertical)
+                fator_vertical = 1.0 if t_cy <= a_cy else 2.0
+                w_dx = dx * 1.6
+                w_dy = dy * fator_vertical
 
-            if dist_ponderada < menor_distancia:
-                menor_distancia = dist_ponderada
+            dist_ponderada_sq = w_dx * w_dx + w_dy * w_dy
+
+            if dist_ponderada_sq < menor_distancia_sq:
+                menor_distancia_sq = dist_ponderada_sq
                 melhor_regiao = reg
 
         if melhor_regiao is not None:
             melhor_regiao.tokens_incluidos.append(token)
-            tokens_atribuidos.add(token.id_token)
+            tokens_atribuidos.add(t_id)
 
     # Finalização das regiões com âncoras
     regioes_validas: List[EvidenceRegion] = []
+    inv_slot_h = 1.0 / (0.15 * altura_doc) if altura_doc > 0 else 1.0
     for r in regioes:
-        r.tokens_incluidos = sorted(
-            r.tokens_incluidos,
+        r.tokens_incluidos.sort(
             key=lambda t: (t.bbox.y_min if t.bbox else 0, t.bbox.x_min if t.bbox else 0)
         )
         r.calcular_bbox_envolvente()
@@ -186,7 +226,7 @@ def clusterizar_espacialmente(
     regioes_ordenadas = sorted(
         regioes_validas,
         key=lambda r: (
-            int(r.ancora.bbox.centro_y / (0.15 * altura_doc)) if r.ancora and r.ancora.bbox else 0,
+            int(r.ancora.bbox.centro_y * inv_slot_h) if r.ancora and r.ancora.bbox else 0,
             r.ancora.bbox.centro_x if r.ancora and r.ancora.bbox else 0
         )
     )

@@ -1352,51 +1352,63 @@ def coletar_tudo(tavily_client: Any) -> List[Dict[str, Any]]:
     todas: List[Dict[str, Any]] = []
     max_por_grupo = int(os.getenv("MAX_CONSULTAS_POR_GRUPO", "5"))
 
-    tasks: List[Tuple[int, str, str, str]] = []
-    task_id = 0
+    flat_tasks: List[Tuple[int, str, str, str, str]] = []
+    q_id = 0
     for grupo, itens in consultas.items():
         itens_exec = itens[:max_por_grupo]
         logger.info("[COLETA] %s | %d consultas", grupo, len(itens_exec))
         for q, alvo in itens_exec:
-            tasks.append((task_id, grupo, q, alvo))
-            task_id += 1
+            if USAR_TAVILY and tavily_client:
+                flat_tasks.append((q_id, "tavily", grupo, q, alvo))
+            if USAR_DDG:
+                flat_tasks.append((q_id, "ddg", grupo, q, alvo))
+            if USAR_NEWS_RSS:
+                flat_tasks.append((q_id, "news_rss", grupo, q, alvo))
+            q_id += 1
 
-    _IO_STATS["discovery_tasks"] = len(tasks)
+    _IO_STATS["discovery_tasks"] = len(flat_tasks)
     t_start = time.perf_counter()
 
-    def _exec_discovery_task(task: Tuple[int, str, str, str]) -> Tuple[int, List[Dict[str, Any]]]:
-        tid, grupo, q, alvo = task
+    def _exec_provider_task(task: Tuple[int, str, str, str, str]) -> Tuple[int, str, List[Dict[str, Any]]]:
+        qid, prov, grupo, q, alvo = task
         resultados = []
         try:
-            if USAR_TAVILY and tavily_client:
-                resultados.extend(buscar_tavily(tavily_client, q, grupo))
-            resultados.extend(buscar_ddg(q, grupo))
-            resultados.extend(buscar_news_rss(q, grupo))
+            if prov == "tavily" and tavily_client:
+                resultados = buscar_tavily(tavily_client, q, grupo)
+            elif prov == "ddg":
+                resultados = buscar_ddg(q, grupo)
+            elif prov == "news_rss":
+                resultados = buscar_news_rss(q, grupo)
             for r in resultados:
                 r["alvo"] = alvo
         except Exception as e:
-            logger.warning("[DISCOVERY WORKER] %s | %s: %s", grupo, q[:60], str(e)[:120])
-        return tid, resultados
+            logger.warning("[DISCOVERY WORKER %s] %s | %s: %s", prov.upper(), grupo, q[:60], str(e)[:120])
+        return qid, prov, resultados
 
-    results_by_id: Dict[int, List[Dict[str, Any]]] = {}
-    if tasks:
-        with ThreadPoolExecutor(max_workers=DISCOVERY_MAX_WORKERS, thread_name_prefix="sniper-discovery") as executor:
-            future_to_task = {executor.submit(_exec_discovery_task, t): t[0] for t in tasks}
-            for future in concurrent.futures.as_completed(future_to_task):
+    results_by_qid: Dict[int, Dict[str, List[Dict[str, Any]]]] = {
+        i: {"tavily": [], "ddg": [], "news_rss": []} for i in range(q_id)
+    }
+
+    workers = min(32, max(DISCOVERY_MAX_WORKERS, 16))
+    if flat_tasks:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sniper-discovery") as executor:
+            future_map = {executor.submit(_exec_provider_task, t): t for t in flat_tasks}
+            for future in concurrent.futures.as_completed(future_map):
                 try:
-                    tid, res = future.result()
-                    results_by_id[tid] = res
+                    qid, prov, res = future.result()
+                    results_by_qid[qid][prov] = res
                 except Exception as e:
-                    tid = future_to_task[future]
-                    logger.warning("[DISCOVERY FUTURE] Tarefa %d falhou: %s", tid, str(e)[:120])
-                    results_by_id[tid] = []
+                    task_info = future_map[future]
+                    logger.warning("[DISCOVERY FUTURE] Tarefa %s falhou: %s", str(task_info[:2]), str(e)[:120])
 
-    # Reconstituição rigorosamente determinística na ordem original das tarefas
-    for tid, _, _, _ in tasks:
-        todas.extend(results_by_id.get(tid, []))
+    # Reconstituição rigorosamente determinística na ordem canônica (query_id -> tavily -> ddg -> news_rss)
+    for i in range(q_id):
+        todas.extend(results_by_qid[i]["tavily"])
+        todas.extend(results_by_qid[i]["ddg"])
+        todas.extend(results_by_qid[i]["news_rss"])
 
     _IO_STATS["discovery_time"] = time.perf_counter() - t_start
-    logger.info("[COLETA] %d resultados brutos coletados em %.2fs (concorrência N=%d)", len(todas), _IO_STATS["discovery_time"], DISCOVERY_MAX_WORKERS)
+    logger.info("[COLETA] %d resultados brutos coletados em %.2fs (concorrência N=%d)", len(todas), _IO_STATS["discovery_time"], workers)
     return todas
 
 # ============================================================
@@ -1614,8 +1626,6 @@ def extrair_pagina(url: str) -> Dict[str, Any]:
         if "html" not in ctype and "xhtml" not in ctype:
             raise RuntimeError("não HTML")
         soup = BeautifulSoup(raw["html"], "html.parser")
-        for tag in soup(["script", "style", "noscript", "svg", "iframe", "form"]):
-            tag.decompose()
         title = soup.title.get_text(" ", strip=True) if soup.title else ""
         pub = ""
         for m in soup.find_all("meta"):
@@ -1638,6 +1648,8 @@ def extrair_pagina(url: str) -> Dict[str, Any]:
                         stack.extend(item["@graph"])
                     pub = pub or str(item.get("datePublished") or item.get("dateCreated") or "")
                     title = title or str(item.get("headline") or item.get("name") or "")
+        for tag in soup(["script", "style", "noscript", "svg", "iframe", "form"]):
+            tag.decompose()
         texto = soup.get_text("\n", strip=True)
         texto = re.sub(r"\n{3,}", "\n\n", texto)
         if len(texto) < 250 and PLAYWRIGHT_ATIVO:

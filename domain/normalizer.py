@@ -3,6 +3,7 @@
 Módulo de Domínio — Normalização e Sanitização Textual / Numérica.
 Lógica de domínio pura sem I/O, rede, banco ou estado global.
 """
+import functools
 import re
 import unicodedata
 from datetime import datetime
@@ -13,16 +14,37 @@ try:
 except ImportError:
     date_parser = None
 
+_RE_SPACES = re.compile(r"\s+")
+_RE_MONEY_CLEAN = re.compile(r"[^0-9.\-]")
+_RE_PROD_UNITS = re.compile(
+    r"\b\d+(?:[\.,]\d+)?\s*(?:kg|kilo|quilo|kilos|quilos|g|gr|grama|gramas|mg|miligrama|miligramas|l|lt|litro|litros|ml|mls|mililitro|mililitros|un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item|m2|m²)\b"
+)
+_RE_PROD_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_RE_KG = re.compile(r"\b(\d+(?:\.\d+)?)\s*(kg|kilo|quilo|kilos|quilos)\b")
+_RE_G = re.compile(r"\b(\d+(?:\.\d+)?)\s*(g|gr|grama|gramas)\b")
+_RE_MG = re.compile(r"\b(\d+(?:\.\d+)?)\s*(mg|miligrama|miligramas)\b")
+_RE_L = re.compile(r"\b(\d+(?:\.\d+)?)\s*(l|lt|litro|litros)\b")
+_RE_ML = re.compile(r"\b(\d+(?:\.\d+)?)\s*(ml|mls|mililitro|mililitros)\b")
+_RE_UN = re.compile(r"\b(\d+(?:\.\d+)?)\s*(un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item)\b")
+_RE_M2 = re.compile(r"\b(\d+(?:\.\d+)?)\s*(m2|m²|metros quadrados)\b")
+
+
+@functools.lru_cache(maxsize=16384)
+def _normalizar_str(s: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", s)
+    cleaned = "".join(c for c in decomposed if not unicodedata.combining(c))
+    lowered = cleaned.lower()
+    collapsed = _RE_SPACES.sub(" ", lowered)
+    return collapsed.strip()
+
 
 def normalizar(texto: Any) -> str:
     """Normaliza texto via NFKD, removendo acentos, convertendo para minúsculas e colapsando espaços."""
     if texto is None:
         return ""
-    s = unicodedata.normalize("NFKD", str(texto))
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    s = s.lower()
-    s = re.sub(r"\s+", " ", s)
-    return s.strip()
+    if isinstance(texto, str):
+        return _normalizar_str(texto)
+    return _normalizar_str(str(texto))
 
 
 def remover_acentos(texto: Any) -> str:
@@ -47,7 +69,7 @@ def termo(texto: str, consulta: str) -> bool:
 
 def truncar(texto: str, n: int) -> str:
     """Trunca texto de forma estável respeitando limites de palavras."""
-    s = re.sub(r"\s+", " ", str(texto or "")).strip()
+    s = _RE_SPACES.sub(" ", str(texto or "")).strip()
     if len(s) <= n:
         return s
     return s[: max(20, n - 3)].rsplit(" ", 1)[0] + "..."
@@ -84,7 +106,7 @@ def parse_money(value: Any) -> Optional[float]:
     elif "," in s:
         s = s.replace(",", ".")
     try:
-        v = float(re.sub(r"[^0-9.\-]", "", s))
+        v = float(_RE_MONEY_CLEAN.sub("", s))
         return round(v, 2) if v >= 0 else None
     except Exception:
         return None
@@ -96,25 +118,25 @@ def normalizar_quantidade(unidade: str) -> Tuple[Optional[float], Optional[str]]
         return None, None
     n = normalizar(unidade).replace(",", ".")
     # 1. Pesos (canônico: g)
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(kg|kilo|quilo|kilos|quilos)\b", n)
+    m = _RE_KG.search(n)
     if m: return float(m.group(1)) * 1000.0, "g"
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(g|gr|grama|gramas)\b", n)
+    m = _RE_G.search(n)
     if m: return float(m.group(1)), "g"
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(mg|miligrama|miligramas)\b", n)
+    m = _RE_MG.search(n)
     if m: return float(m.group(1)) / 1000.0, "g"
 
     # 2. Volumes (canônico: ml)
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(l|lt|litro|litros)\b", n)
+    m = _RE_L.search(n)
     if m: return float(m.group(1)) * 1000.0, "ml"
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(ml|mls|mililitro|mililitros)\b", n)
+    m = _RE_ML.search(n)
     if m: return float(m.group(1)), "ml"
 
     # 3. Unidades / Contagens / Serviços (canônico: un)
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item)\b", n)
+    m = _RE_UN.search(n)
     if m: return float(m.group(1)), "un"
 
     # 4. Área (canônico: m2)
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(m2|m²|metros quadrados)\b", n)
+    m = _RE_M2.search(n)
     if m: return float(m.group(1)), "m2"
 
     return None, None
@@ -123,13 +145,9 @@ def normalizar_quantidade(unidade: str) -> Tuple[Optional[float], Optional[str]]
 def nome_produto_normalizado(name: str) -> str:
     """Remove unidades e caracteres especiais para comparação fonética de produtos."""
     n = normalizar(name)
-    n = re.sub(
-        r"\b\d+(?:[\.,]\d+)?\s*(kg|kilo|quilo|kilos|quilos|g|gr|grama|gramas|mg|miligrama|miligramas|l|lt|litro|litros|ml|mls|mililitro|mililitros|un|und|unidade|unidades|caps|capsula|capsulas|dose|doses|sessoes|sessao|sessões|sessão|diaria|diarias|diária|diárias|noite|noites|peca|peça|pecas|peças|itens|item|m2|m²)\b",
-        " ",
-        n
-    )
-    n = re.sub(r"[^a-z0-9]+", " ", n)
-    return re.sub(r"\s+", " ", n).strip()
+    n = _RE_PROD_UNITS.sub(" ", n)
+    n = _RE_PROD_NON_ALNUM.sub(" ", n)
+    return _RE_SPACES.sub(" ", n).strip()
 
 
 def tokens_produto(name: str) -> Set[str]:

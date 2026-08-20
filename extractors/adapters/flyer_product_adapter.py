@@ -4,6 +4,7 @@ Adapter de Extração de Produtos e Preços de Encartes / Folhetos Digitais — 
 Especializa o motor genérico espacial sem hardcode na camada central.
 """
 
+import functools
 import re
 from typing import Any, Dict, List, Optional, Sequence
 from extractors.models import (
@@ -33,6 +34,12 @@ _RE_NUMERO_PURO = re.compile(r'^\d+(?:[.,]\d+)?$')
 _RE_PALAVRA_VALIDA = re.compile(r'[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]{2,}')
 
 
+@functools.lru_cache(maxsize=4096)
+def _normalizar_espacos_cached(texto: str) -> str:
+    return normalizar_espacos(texto)
+
+
+@functools.lru_cache(maxsize=4096)
 def _is_valid_candidate_text(texto: str) -> bool:
     """Valida se uma string é um candidato textual legítimo para nome/descrição de entidade."""
     s = texto.strip()
@@ -115,7 +122,7 @@ class FlyerProductResolver(EntityResolver):
                 )]
             )
 
-        # 1. Coleta e categorização de textos
+        # 1. Coleta e categorização de textos em passo único
         textos_filtrados: List[str] = []
         medidas_encontradas: List[str] = []
         embalagens_encontradas: List[str] = []
@@ -131,9 +138,11 @@ class FlyerProductResolver(EntityResolver):
             token_id=ancora.token_ref.id_token
         ))
 
-        # Classifica os tokens de contexto
+        # Classifica os tokens de contexto em um único passo
+        tokens_pass_filtro = []
         for t in tokens:
-            t_str = normalizar_espacos(t.texto)
+            t_raw = t.texto
+            t_str = _normalizar_espacos_cached(t_raw) if t_raw else ""
             if not t_str or self._re_ruido_comercial.match(t_str) or self._re_disclaimer.search(t_str):
                 continue
 
@@ -162,30 +171,24 @@ class FlyerProductResolver(EntityResolver):
                     token_id=t.id_token
                 ))
 
+            is_valid_raw = _is_valid_candidate_text(t_raw)
+            tokens_pass_filtro.append((t, t_raw.strip(), is_valid_raw))
+
         # 2. Heurística determinística de nome de produto:
         # Ordena por proximidade vertical em relação à âncora de preço
         if ancora.bbox:
+            ancora_cy = ancora.bbox.centro_y
+            tokens_com_bbox = [item for item in tokens_pass_filtro if item[0].bbox is not None]
             tokens_proximos = sorted(
-                [
-                    t for t in tokens
-                    if not self._re_ruido_comercial.match(normalizar_espacos(t.texto))
-                    and not self._re_disclaimer.search(normalizar_espacos(t.texto))
-                    and not self._re_condicao_comercial.match(normalizar_espacos(t.texto))
-                    and t.bbox
-                ],
-                key=lambda t: abs(t.bbox.centro_y - ancora.bbox.centro_y) if t.bbox else 0
+                tokens_com_bbox,
+                key=lambda item: abs(item[0].bbox.centro_y - ancora_cy)
             )
         else:
-            tokens_proximos = [
-                t for t in tokens
-                if not self._re_ruido_comercial.match(normalizar_espacos(t.texto))
-                and not self._re_disclaimer.search(normalizar_espacos(t.texto))
-                and not self._re_condicao_comercial.match(normalizar_espacos(t.texto))
-            ]
+            tokens_proximos = tokens_pass_filtro
 
-        linhas_candidatas = [t.texto.strip() for t in tokens_proximos if _is_valid_candidate_text(t.texto)]
+        linhas_candidatas = [item[1] for item in tokens_proximos if item[2]]
         nome_candidato = " ".join(linhas_candidatas[:2]) if linhas_candidatas else " ".join(textos_filtrados[:2])
-        nome_limpo = normalizar_espacos(nome_candidato) if (linhas_candidatas or textos_filtrados) else ancora.texto_bruto
+        nome_limpo = _normalizar_espacos_cached(nome_candidato) if (linhas_candidatas or textos_filtrados) else ancora.texto_bruto
 
         # 3. Identificação de marca e peso/volume
         peso_volume = medidas_encontradas[-1] if medidas_encontradas else None
