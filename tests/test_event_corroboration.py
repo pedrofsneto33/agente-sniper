@@ -117,6 +117,38 @@ class TestEventCorroboration(unittest.TestCase):
         self.assertEqual(enriched["fontes_independentes"], 1)
         self.assertEqual(enriched["confianca_evidencia"], CONFIANCA_PROVAVEL)
 
+    def test_11_fonte_corporativa_outro_nicho_reconhecida_como_oficial(self):
+        """11. Fonte com escopo corporativo de qualquer nicho (ex: clínica, SaaS) é reconhecida como oficial."""
+        f_clinica = Fonte(
+            id=20, titulo="Comunicado Oficial Unimed",
+            url="https://unimed.com.br/noticias/expansao", origem="web",
+            dominio="unimed.com.br", entidade="Unimed", escopo="corporativo"
+        )
+        self.assertTrue(possui_fonte_oficial([f_clinica]))
+
+        f_saas = Fonte(
+            id=21, titulo="Totvs anuncia novos módulos",
+            url="https://totvs.com/press/release", origem="web",
+            dominio="totvs.com", entidade="Totvs", escopo="corporativo"
+        )
+        self.assertTrue(possui_fonte_oficial([f_saas]))
+
+    def test_12_blog_jornal_direto_nao_e_fonte_oficial(self):
+        """12. Extração direta de blog ou portal regional de notícias NÃO é classificada como oficial."""
+        f_blog = Fonte(
+            id=30, titulo="Blog de Opinião Local",
+            url="https://blogteresina.com/coluna/1", origem="web",
+            dominio="blogteresina.com", direta=True, escopo="local", entidade="mercado"
+        )
+        self.assertFalse(possui_fonte_oficial([f_blog]))
+
+        f_news = Fonte(
+            id=31, titulo="Notícia Geral",
+            url="https://portalgeral.com/materia/2", origem="web",
+            dominio="portalgeral.com", direta=True, escopo="nacional", entidade="mercado"
+        )
+        self.assertFalse(possui_fonte_oficial([f_news]))
+
 
 if __name__ == "__main__":
     unittest.main()

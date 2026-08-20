@@ -85,12 +85,12 @@ def possui_fonte_oficial(fontes: Any) -> bool:
     for f in fontes:
         dom = (f.get("dominio") if isinstance(f, dict) else getattr(f, "dominio", "")) or ""
         url = (f.get("url") if isinstance(f, dict) else getattr(f, "url", "")) or ""
+        escopo = (f.get("escopo") if isinstance(f, dict) else getattr(f, "escopo", "")) or ""
         s = f"{dom} {url}".lower()
         if any(of in s for of in DOMINIOS_OFICIAIS_REGULATORIOS):
             return True
-        if getattr(f, "direta", False) or (isinstance(f, dict) and f.get("direct")):
-            if any(corp in dom.lower() for corp in ["carvalho", "mateus", "assai", "grupomateus"]):
-                return True
+        if escopo == "corporativo":
+            return True
     return False
 
 

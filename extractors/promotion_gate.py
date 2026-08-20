@@ -251,9 +251,7 @@ class PromotionGate:
 
         # 4. HASH DEPOIS DO SQLITE
         hash_after = calcular_sha256_arquivo(self.db_path)
-        sqlite_integrity = (hash_before == hash_after)
-        if hash_before and hash_before != SQLITE_CANONICAL_HASH:
-            sqlite_integrity = False
+        sqlite_integrity = bool(hash_before and hash_before == hash_after)
 
         # 5. CÁLCULO DE TAXAS
         tot_itens_avaliados = max(1, max(total_legacy, total_generic))

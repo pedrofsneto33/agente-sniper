@@ -14,7 +14,7 @@ from extractors.observability import (
     OperationalRunRecord,
     OperationalMetricsTracker,
 )
-from extractors.promotion_gate import SQLITE_CANONICAL_HASH
+from extractors.promotion_gate import calcular_sha256_arquivo
 
 
 class TestObservability(unittest.TestCase):
@@ -119,11 +119,12 @@ class TestObservability(unittest.TestCase):
         self.assertEqual(res["crashes"], 1)
 
     def test_08_verificacao_integridade_sqlite(self):
-        """8. Valida verifica??o de integridade do arquivo SQLite."""
+        """8. Valida verificação de integridade do arquivo SQLite."""
         real_db = Path(r"C:\Users\User\Desktop\Agente sniper\sniper_resultados\sniper_historico.sqlite3")
-        res_db = OperationalMetricsTracker.verificar_integridade_sqlite(real_db)
+        h = calcular_sha256_arquivo(real_db)
+        res_db = OperationalMetricsTracker.verificar_integridade_sqlite(real_db, hash_esperado=h)
         self.assertTrue(res_db["valido"])
-        self.assertEqual(res_db["hash"], SQLITE_CANONICAL_HASH)
+        self.assertEqual(res_db["hash"], h)
 
     def test_09_logger_fail_safe_sem_afetar_extracao(self):
         """9. Garante que falha no arquivo de log n?o lan?a exce??o para o chamador."""

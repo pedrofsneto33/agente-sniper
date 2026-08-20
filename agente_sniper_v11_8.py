@@ -109,7 +109,7 @@ from domain.events import (
     EVENT_RULES,
     RISK_KINDS,
     OPPORTUNITY_KINDS,
-    recencia_score as _domain_recencia_score,
+    recencia_score,
     qualidade_fonte,
     evento_titulo_estavel,
     canonical_event_key,
@@ -118,14 +118,14 @@ from domain.events import (
     criar_eventos as _domain_criar_eventos,
 )
 from domain.scoring import (
-    medir_dimensoes as _domain_medir_dimensoes,
-    score_ambiente_competitivo as _domain_score_ambiente_competitivo,
+    medir_dimensoes,
+    score_ambiente_competitivo,
     score_pressao_competitiva as _domain_score_pressao_competitiva,
     score_vulnerabilidade_empresa as _domain_score_vulnerabilidade_empresa,
-    classificar_sinal as _domain_classificar_sinal,
-    acao_evento as _domain_acao_evento,
-    gerar_sinais_deterministicos as _domain_gerar_sinais_deterministicos,
-    score_momentum as _domain_score_momentum,
+    classificar_sinal,
+    acao_evento,
+    gerar_sinais_deterministicos,
+    score_momentum,
 )
 from domain.decision import (
     inteligencia_deterministica,
@@ -135,6 +135,16 @@ from domain.decision import (
 from domain.profiles import (
     NICHE_PROFILES,
     obter_perfil_nicho,
+)
+from domain.sources import (
+    DOMINIOS_PRIORITARIOS,
+    CIDADES_EXTERIORES,
+    dominios_oficiais_configurados,
+    score_fonte,
+    classificar_escopo,
+    sinais_deterministicos,
+    transformar,
+    deduplicar,
 )
 from reports import (
     ref_text,
@@ -163,15 +173,55 @@ from search import (
     buscar_ddg,
     buscar_news_rss as _search_buscar_news_rss,
     buscar_tavily as _search_buscar_tavily,
-    coletar_tudo as _search_coletar_tudo,
     gerar_consultas as _search_gerar_consultas,
 )
 from web import (
     PersistentPlaywrightManager,
-    enriquecer as _web_enriquecer,
     extrair_html as _web_extrair_html,
     extrair_pagina as _web_extrair_pagina,
     extrair_playwright as _web_extrair_playwright,
+)
+from pipeline import (
+    OfflineNetworkGuard,
+    resolver_fixture_fontes_offline,
+    executar_replay_offline,
+    coletar_tudo,
+    enriquecer,
+)
+from pricing import (
+    MONEY_RE,
+    PRICE_SOURCES,
+    PRICE_PRODUCT_SCHEMA_TYPES,
+    PRICE_BLOCKED_DOMAINS,
+    PRICE_NONCOMMERCIAL_URL_HINTS,
+    PRICE_NEGATIVE_PATH_HINTS,
+    PRICE_PAGE_NEGATIVE_TERMS,
+    PRICE_COMMERCIAL_CONTENT_HINTS,
+    PRICE_DISCOVERY_PATH_HINTS,
+    get_http_session,
+    _is_non_commercial_url,
+    _price_page_type,
+    _is_blocked_price_domain,
+    is_price_candidate_url,
+    _commercial_signal_url,
+    carregar_price_sources,
+    _fetch_html_http,
+    _extract_commercial_links,
+    _expand_commercial_domain,
+    _discover_official_commercial_urls,
+    descobrir_fontes_preco,
+    mesclar_price_sources,
+    _walk_json,
+    _extract_price_from_obj,
+    _schema_types,
+    _plausible_price,
+    _price_item_confidence,
+    _extract_product_objects,
+    _price_page_html,
+    _buscar_preco_site,
+    coletar_itens_preco_fonte,
+    _playwright_session_search,
+    comparar_precos,
 )
 
 # ---------- dependências opcionais ----------
@@ -261,26 +311,6 @@ SITEMAP_PROBING_TIMEOUT = float(os.getenv("SITEMAP_PROBING_TIMEOUT", "4.0"))
 DISCOVERY_MAX_WORKERS = min(int(os.getenv("DISCOVERY_MAX_WORKERS", "6")), 10)
 ENRICH_MAX_WORKERS = min(int(os.getenv("ENRICH_MAX_WORKERS", "8")), 12)
 PRICE_HISTORY_MIN_CHANGE_PCT = float(os.getenv("PRICE_HISTORY_MIN_CHANGE_PCT", "0.5"))
-PRICE_DISCOVERY_PATH_HINTS = [
-    x.strip().lower() for x in os.getenv(
-        "PRICE_DISCOVERY_PATH_HINTS",
-        "product|products|service|services|offer|offers|catalog|catalogue|plan|plans|price|pricing"
-    ).split("|") if x.strip()
-]
-PRICE_BLOCKED_DOMAINS = {
-    x.strip().lower() for x in os.getenv("PRICE_BLOCKED_DOMAINS", "").split("|") if x.strip()
-}
-PRICE_NONCOMMERCIAL_URL_HINTS = [
-    x.strip().lower() for x in os.getenv(
-        "PRICE_NONCOMMERCIAL_URL_HINTS", "news|noticia|noticias|article|blog|career|careers|employment|emprego"
-    ).split("|") if x.strip()
-]
-
-# Sinais NEGATIVOS: página claramente não-comercial (vaga, notícia, emprego, carreira).
-# Usado para impedir que o bootstrap comercial promova essas URLs a "candidata de preço"
-# só porque elas mencionam a empresa-alvo/concorrente.
-PRICE_NEGATIVE_PATH_HINTS = PRICE_NONCOMMERCIAL_URL_HINTS
-
 # v11.8
 EVENT_DATE_CLUSTER_DAYS = int(os.getenv("EVENT_DATE_CLUSTER_DAYS", "45"))
 EVENT_TITLE_SIM_THRESHOLD = float(os.getenv("EVENT_TITLE_SIM_THRESHOLD", "0.52"))
@@ -288,90 +318,6 @@ EVENT_TOKEN_SIM_THRESHOLD = float(os.getenv("EVENT_TOKEN_SIM_THRESHOLD", "0.30")
 EVENT_CURRENT_WINDOW_DAYS = int(os.getenv("EVENT_CURRENT_WINDOW_DAYS", str(JANELA_DIAS)))
 EVENT_CONTEXTUAL_MAX_DAYS = int(os.getenv("EVENT_CONTEXTUAL_MAX_DAYS", "365"))
 
-PRICE_PAGE_NEGATIVE_TERMS = set(PRICE_NONCOMMERCIAL_URL_HINTS)
-PRICE_COMMERCIAL_CONTENT_HINTS = [
-    x.strip().lower() for x in os.getenv(
-        "PRICE_COMMERCIAL_CONTENT_HINTS",
-        "add to cart|buy now|offer|product|service|catalog|price|reserve"
-    ).split("|") if x.strip()
-]
-PRICE_PRODUCT_SCHEMA_TYPES = {
-    x.strip().lower() for x in os.getenv(
-        "PRICE_COMMERCIAL_SCHEMA_TYPES", "product|service|offer|aggregateoffer"
-    ).split("|") if x.strip()
-}
-
-
-def _is_non_commercial_url(url: str) -> bool:
-    alvo = normalizar(url)
-    dom = dominio(url)
-    if dom in PRICE_BLOCKED_DOMAINS:
-        return True
-    return any(h in alvo for h in PRICE_NEGATIVE_PATH_HINTS)
-
-
-def _price_page_type(url: str, title: str = "", body: str = "") -> str:
-    dom = dominio(url)
-    if dom in PRICE_BLOCKED_DOMAINS:
-        return "BLOCKED"
-    nurl = normalizar(url)
-    ntitle = normalizar(title)
-    nbody = normalizar(body[:5000])
-    if any(h in nurl for h in PRICE_NEGATIVE_PATH_HINTS):
-        return "ARTICLE_OR_EMPLOYMENT"
-    if any(term in ntitle for term in PRICE_PAGE_NEGATIVE_TERMS):
-        return "ARTICLE_OR_EMPLOYMENT"
-    if any(term in nbody[:1800] for term in PRICE_PAGE_NEGATIVE_TERMS):
-        return "ARTICLE_OR_EMPLOYMENT"
-    if any(x in nurl for x in PRICE_DISCOVERY_PATH_HINTS):
-        return "COMMERCIAL_CANDIDATE"
-    if any(x in nbody[:1500] for x in PRICE_COMMERCIAL_CONTENT_HINTS):
-        return "COMMERCIAL_CANDIDATE"
-    if nurl.count("/") <= 3:
-        return "ROOT_CANDIDATE"
-    return "OTHER"
-
-
-def _is_blocked_price_domain(url: str) -> bool:
-    return _price_page_type(url) == "BLOCKED"
-
-
-def is_price_candidate_url(url: str) -> bool:
-    if _is_blocked_price_domain(url):
-        return False
-    return _commercial_signal_url(url) >= 0.45
-
-
-def _commercial_signal_url(url: str) -> float:
-    if not url:
-        return -1.0
-    dom = dominio(url)
-    if dom in PRICE_BLOCKED_DOMAINS:
-        return -1.0
-    path = normalizar(urlparse(url).path)
-    full = normalizar(url)
-    negative = any(term in full for term in PRICE_NONCOMMERCIAL_URL_HINTS)
-    score = 0.0
-    if any(h in path for h in PRICE_DISCOVERY_PATH_HINTS):
-        score += 0.20
-    if path in {"","/","/home","/index.html","/index.php"}:
-        score += 0.05
-    if negative:
-        score -= 0.15
-    return max(-1.0, min(1.0, score))
-
-
-def carregar_price_sources() -> List[Dict[str, Any]]:
-    if PRECO_SOURCES_JSON:
-        try:
-            obj = json.loads(PRECO_SOURCES_JSON)
-            if isinstance(obj, list):
-                return [x for x in obj if isinstance(x, dict) and x.get("name")]
-        except Exception:
-            pass
-    return [{"name": EMPRESA_ALVO, "role": "target", "url": u} for u in PRECO_ALVO_URLS]
-
-PRICE_SOURCES = carregar_price_sources()
 PRICE_AUTO_SEARCH_COMMERCIAL = os.getenv("PRICE_AUTO_SEARCH_COMMERCIAL", "1") == "1"
 PRICE_COMMERCIAL_QUERY_LIMIT = int(os.getenv("PRICE_COMMERCIAL_QUERY_LIMIT", "3"))
 PRICE_PLAYWRIGHT_TIMEOUT = min(int(os.getenv("PRICE_PLAYWRIGHT_TIMEOUT", "10000")), 10000)
@@ -536,296 +482,6 @@ _TAVILY_CACHE_TTL = 86400.0  # 24h
 
 _TAVILY_GUARD = TavilyBudgetGuard(max_queries=MAX_TAVILY_QUERIES_PER_RUN)
 
-def _fetch_html_http(url: str, timeout: Optional[float] = None) -> Tuple[str, str]:
-    t0 = time.perf_counter()
-    with _STATS_LOCK:
-        _IO_STATS["http_requests"] += 1
-    req_timeout = timeout if timeout is not None else REQUEST_TIMEOUT
-    try:
-        session = get_http_session()
-        r = session.get(url, timeout=req_timeout, allow_redirects=True)
-        t_elapsed = time.perf_counter() - t0
-        with _STATS_LOCK:
-            _IO_STATS["http_time"] += t_elapsed
-            if r.status_code == 200:
-                _IO_STATS["http_200"] += 1
-            elif r.status_code == 403:
-                _IO_STATS["http_403"] += 1
-            elif r.status_code == 429:
-                _IO_STATS["http_429"] += 1
-            elif 500 <= r.status_code <= 599:
-                _IO_STATS["http_5xx"] += 1
-        ctype = (r.headers.get("content-type") or "").lower()
-        if r.ok and ("html" in ctype or "xml" in ctype) and len(r.text) > 200:
-            return r.text, r.url
-    except requests.exceptions.Timeout:
-        t_elapsed = time.perf_counter() - t0
-        with _STATS_LOCK:
-            _IO_STATS["http_time"] += t_elapsed
-            _IO_STATS["http_timeouts"] += 1
-    except Exception as e:
-        t_elapsed = time.perf_counter() - t0
-        with _STATS_LOCK:
-            _IO_STATS["http_time"] += t_elapsed
-            dom = source_domain_root(url)
-            if dom:
-                _IO_STATS["host_errors"][dom] = _IO_STATS["host_errors"].get(dom, 0) + 1
-        logger.debug("[PRICE DISCOVERY HTTP] %s", str(e)[:120])
-    return "", url
-
-
-def _extract_commercial_links(base_url: str, html: str, limit: int = 20) -> List[str]:
-    if not html:
-        return []
-    soup = BeautifulSoup(html, "html.parser")
-    base = urlparse(base_url)
-    ranked = []
-    seen = set()
-    for a in soup.find_all("a", href=True):
-        href = str(a.get("href") or "").strip()
-        if not href or href.startswith(("javascript:", "mailto:", "tel:", "#")):
-            continue
-        try:
-            u = urljoin(base_url, href)
-            pu = urlparse(u)
-        except Exception:
-            continue
-        if pu.scheme not in {"http", "https"}:
-            continue
-        if _is_blocked_price_domain(u) or _is_non_commercial_url(u):
-            continue
-        txt = normalizar(a.get_text(" ", strip=True))
-        same_domain = pu.netloc == base.netloc
-        signal = _commercial_signal_url(u)
-        anchor_signal = any(k in txt for k in [
-            "comprar", "loja", "loja online", "shop", "supermarket", "supershop",
-            "produto", "produtos", "oferta", "ofertas", "catalogo", "catálogo",
-            "preco", "preço", "servicos", "serviços", "cardapio", "menu", "reservar"
-        ])
-        if anchor_signal:
-            signal += 0.35
-        # Externo só entra com forte sinal comercial; interno pode entrar com sinal moderado.
-        if (not same_domain) and signal < 0.70:
-            continue
-        if signal <= 0.0:
-            continue
-        un = url_normalizada(u)
-        if un in seen:
-            continue
-        seen.add(un)
-        ranked.append((signal, un))
-    ranked.sort(key=lambda x: (-x[0], x[1]))
-    return [u for _, u in ranked[:limit]]
-
-
-def _expand_commercial_domain(url: str, name: str, role: str, location_note: str = "") -> List[Dict[str, Any]]:
-    if not url:
-        return []
-    if _is_blocked_price_domain(url):
-        return []
-    dom = source_domain_root(url)
-    if not dom:
-        return []
-
-    dom_norm = normalizar(dom).strip()
-    name_norm = normalizar(name).strip()
-    cache_key = (dom_norm, name_norm, role)
-
-    # 1. Deduplicação e Cache Hit na execução atual
-    if cache_key in _DOMAIN_EXPANSION_CACHE:
-        _IO_STATS["probes_cache_hit"] += 1
-        _IO_STATS["repeated_domains"] += 1
-        return [dict(x) for x in _DOMAIN_EXPANSION_CACHE[cache_key]]
-
-    _IO_STATS["domain_probes"] += 1
-    _IO_STATS["unique_domains"].add(dom_norm)
-    t_start = time.perf_counter()
-
-    candidates = [url]
-    root = f"https://{dom}"
-    if root not in candidates:
-        candidates.append(root)
-
-    sitemap_urls = []
-    if dom_norm in _SITEMAP_DEAD_DOMAINS:
-        _IO_STATS["sitemaps_skipped"] += 2
-    else:
-        sitemap_urls = [f"https://{dom}/sitemap.xml", f"https://{dom}/sitemap_index.xml"]
-
-    discovered = []
-    sitemap_found = False
-
-    # 2. Probing de páginas candidatas
-    for seed in candidates:
-        html, final = _fetch_html_http(seed, timeout=min(REQUEST_TIMEOUT, 10.0))
-        if html:
-            discovered.append(final)
-            discovered.extend(_extract_commercial_links(final, html, PRICE_CRAWL_LINK_LIMIT))
-
-    # 3. Probing de sitemaps com timeout rápido (4s)
-    for seed in sitemap_urls:
-        html, final = _fetch_html_http(seed, timeout=SITEMAP_PROBING_TIMEOUT)
-        if html and ("<loc>" in html or "<url>" in html or "<sitemap>" in html):
-            sitemap_found = True
-            for m in re.finditer(r"<loc>(.*?)</loc>", html, flags=re.I | re.S):
-                u = html_unescape(m.group(1).strip())
-                try:
-                    pu = urlparse(u)
-                    if pu.netloc == dom or pu.netloc.endswith("." + dom):
-                        if is_price_candidate_url(u):
-                            discovered.append(u)
-                except Exception:
-                    continue
-
-    if not sitemap_found and sitemap_urls:
-        _SITEMAP_DEAD_DOMAINS.add(dom_norm)
-
-    uniq = []
-    seen = set()
-    for u in discovered:
-        if u in seen or _is_blocked_price_domain(u):
-            continue
-        seen.add(u)
-        uniq.append({"name": name, "role": role, "url": u, "domain": dom, "location_note": location_note, "discovered": True})
-    uniq.sort(key=lambda x: _commercial_signal_url(x["url"]), reverse=True)
-    res = uniq[:PRICE_DISCOVERY_LIMIT_PER_ENTITY]
-
-    # Armazena no cache da run
-    _DOMAIN_EXPANSION_CACHE[cache_key] = [dict(x) for x in res]
-    _IO_STATS["expansion_time"] += (time.perf_counter() - t_start)
-    return res
-
-
-def _discover_official_commercial_urls(fontes: List[Fonte]) -> List[Dict[str, Any]]:
-    """Usa URLs já coletadas para inferir domínios comerciais candidatos, mas nunca promove
-    redes sociais/diretórios/notícias como catálogo. A expansão acontece depois no domínio.
-    """
-    candidatos: List[Dict[str, Any]] = []
-    seen = set()
-    for f in fontes:
-        if not f.entidade or f.entidade == "mercado":
-            continue
-        dom = source_domain_root(f.url)
-        if not dom or _is_blocked_price_domain(f.url):
-            continue
-        # Domínios de notícia/emprego podem aparecer, mas não são aceitos como fonte final;
-        # só entram se a própria página possuir sinal comercial forte.
-        sig = _commercial_signal_url(f.url)
-        if sig <= 0:
-            continue
-        key=(normalizar(f.entidade),dom)
-        if key in seen:
-            continue
-        seen.add(key)
-        role="target" if normalizar(f.entidade)==normalizar(EMPRESA_ALVO) else "competitor"
-        candidatos.extend(_expand_commercial_domain(f.url, f.entidade, role,
-            "localidade confirmada" if f.cidade_confirmada else "localidade não confirmada"))
-    return candidatos
-
-
-def descobrir_fontes_preco(fontes: List[Fonte], raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> List[Dict[str, Any]]:
-    if not PRICE_SITE_DISCOVERY:
-        return []
-    grupos: Dict[str, List[Fonte]] = {}
-    auto_candidates: List[Dict[str, Any]] = []
-
-    # 0) Descoberta direta em resultados brutos já coletados. Isso evita perder o domínio oficial
-    # durante a normalização/filtro factual.
-    if raw_results:
-        seen_raw=set()
-        for r in raw_results:
-            alvo=str(r.get("alvo") or "").strip()
-            if not alvo or alvo == "mercado":
-                continue
-            url=str(r.get("url") or "").strip()
-            dom=source_domain_root(url)
-            if not dom or _is_blocked_price_domain(url):
-                continue
-            key=(normalizar(alvo),dom)
-            if key in seen_raw:
-                continue
-            # Somente páginas com sinais comerciais ou domínios raiz de propriedade da entidade.
-            title=normalizar(str(r.get("titulo") or ""))
-            body=normalizar(str(r.get("conteudo") or ""))
-            sig=_commercial_signal_url(url)
-            official_hint=any(k in title or k in body for k in [
-                "comprar online","loja online","loja virtual","catalogo","produtos","ofertas","precos","supershop","ecommerce"
-            ])
-            if sig <= 0 and not official_hint:
-                continue
-            role="target" if normalizar(alvo)==normalizar(EMPRESA_ALVO) else "competitor"
-            auto_candidates.extend(_expand_commercial_domain(url, alvo, role, "descoberta comercial"))
-            seen_raw.add(key)
-
-    # 1) fontes com URLs claramente comerciais
-    for f in fontes:
-        if f.entidade and f.entidade not in {"mercado", ""} and is_price_candidate_url(f.url):
-            grupos.setdefault(f.entidade, []).append(f)
-    # 2) bootstrap oficial/comercial: qualquer domínio corporativo confiável da entidade.
-    for f in fontes:
-        if not f.entidade or f.entidade == "mercado" or _is_blocked_price_domain(f.url):
-            continue
-        dom = dominio(f.url)
-        if not dom:
-            continue
-        # Não promover uma fonte de vaga/notícia/emprego para catálogo.
-        if _is_non_commercial_url(f.url) or _is_non_commercial_url(f.titulo):
-            continue
-        grupos.setdefault(f.entidade, [])
-        if len(grupos[f.entidade]) < PRICE_DISCOVERY_LIMIT_PER_ENTITY:
-            grupos[f.entidade].append(f)
-    out=[]
-    out.extend(auto_candidates)
-    out.extend(_discover_official_commercial_urls(fontes))
-    for entidade, fs in grupos.items():
-        role="target" if normalizar(entidade)==normalizar(EMPRESA_ALVO) else "competitor"
-        ordered=sorted(fs, key=lambda x:(1 if is_price_candidate_url(x.url) else 0, x.direta, x.cidade_confirmada, x.atual, x.score), reverse=True)
-        seen_domains=set(); count=0
-        for f in ordered:
-            dom=source_domain_root(f.url)
-            if not dom or dom in seen_domains or _is_blocked_price_domain(f.url):
-                continue
-            # Evitar jornal/diretório como fonte comercial primária.
-            if PRICE_REQUIRE_COMMERCIAL_SIGNAL and _commercial_signal_url(f.url) <= 0:
-                # ainda assim pode ser bootstrap de domínio; expandiremos a raiz e só manteremos links comerciais.
-                expanded=_expand_commercial_domain(f.url, entidade, role, "localidade confirmada" if f.cidade_confirmada else "localidade não confirmada")
-                for src in expanded:
-                    if src["domain"] not in seen_domains:
-                        out.append(src); seen_domains.add(src["domain"]); count += 1
-                    if count >= PRICE_DISCOVERY_LIMIT_PER_ENTITY: break
-                continue
-            out.append({"name":entidade,"role":role,"url":f.url,"domain":dom,"location_note":"localidade confirmada" if f.cidade_confirmada else "localidade não confirmada","discovered":True})
-            seen_domains.add(dom); count += 1
-            if count >= PRICE_DISCOVERY_LIMIT_PER_ENTITY: break
-    # Sempre expandir os dois primeiros domínios por entidade para encontrar /shop, /catalog, /colecoes etc.
-    expanded_out=[]
-    for src in out:
-        expanded_out.append(src)
-    entities={src["name"] for src in out}
-    for entity in entities:
-        base=[src for src in out if src["name"]==entity][:PRICE_MAX_DOMAINS_PER_ENTITY]
-        for src in base:
-            expanded_out.extend(_expand_commercial_domain(src["url"], entity, src["role"], src.get("location_note","")))
-    uniq=[]; seen=set()
-    for src in expanded_out:
-        k=(normalizar(src.get("name","")), src.get("domain") or source_domain_root(src.get("url","")), src.get("role",""), src.get("url",""))
-        if not src.get("url") or k in seen: continue
-        seen.add(k); uniq.append(src)
-    return uniq
-
-
-def mesclar_price_sources(fontes: List[Fonte], raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> List[Dict[str, Any]]:
-    merged=[]; seen=set()
-    for src in list(PRICE_SOURCES)+descobrir_fontes_preco(fontes, raw_results=raw_results, tavily_client=tavily_client):
-        name=str(src.get("name") or "").strip(); url=str(src.get("url") or "").strip()
-        if not name or not url:
-            continue
-        key=(normalizar(name), source_domain_root(url), str(src.get("role","competitor")))
-        if key in seen:
-            continue
-        seen.add(key); merged.append(src)
-    return merged
-
 # ============================================================
 # 5. BUSCAS (SEARCH BINDINGS)
 # ============================================================
@@ -849,224 +505,14 @@ def buscar_news_rss(query: str, categoria: str) -> List[Dict[str, Any]]:
     return _search_buscar_news_rss(query, categoria, session=get_http_session())
 
 
-def coletar_tudo(tavily_client: Any) -> List[Dict[str, Any]]:
-    consultas = gerar_consultas()
-    max_por_grupo = int(os.getenv("MAX_CONSULTAS_POR_GRUPO", "5"))
-    flat_tasks_count = 0
-    for grupo, itens in consultas.items():
-        itens_exec = itens[:max_por_grupo]
-        for _ in itens_exec:
-            if USAR_TAVILY and tavily_client:
-                flat_tasks_count += 1
-            if USAR_DDG:
-                flat_tasks_count += 1
-            if USAR_NEWS_RSS:
-                flat_tasks_count += 1
-
-    _IO_STATS["discovery_tasks"] = flat_tasks_count
-    t_start = time.perf_counter()
-
-    todas = _search_coletar_tudo(
-        tavily_client=tavily_client,
-        consultas=consultas,
-        max_consultas_por_grupo=max_por_grupo,
-        usar_tavily=USAR_TAVILY,
-        usar_ddg=USAR_DDG,
-        usar_news_rss=USAR_NEWS_RSS,
-        max_workers=DISCOVERY_MAX_WORKERS,
-        guard=_TAVILY_GUARD,
-        session=get_http_session(),
-    )
-
-    _IO_STATS["discovery_time"] = time.perf_counter() - t_start
-    logger.info("[COLETA] %d resultados brutos coletados em %.2fs", len(todas), _IO_STATS["discovery_time"])
-    return todas
+# (coletar_tudo reexportado diretamente do pacote pipeline)
 
 # ============================================================
-# 6. VALIDAÇÃO / NORMALIZAÇÃO DAS FONTES
+# 6. VALIDAÇÃO / NORMALIZAÇÃO DAS FONTES (DOMAIN SOURCES BINDINGS)
 # ============================================================
-
-DOMINIOS_PRIORITARIOS = {
-    "gov.br": 1.00,
-    "reclameaqui.com.br": 0.95,
-    "procon": 0.95,
-    "g1.globo.com": 0.92,
-}
-
-def dominios_oficiais_configurados() -> Set[str]:
-    """Deriva dinamicamente os domínios oficiais da empresa-alvo e concorrentes configurados."""
-    doms = set()
-    if EMPRESA_URL:
-        r = source_domain_root(EMPRESA_URL)
-        if r:
-            doms.add(r)
-    for u in PRECO_ALVO_URLS:
-        r = source_domain_root(u)
-        if r:
-            doms.add(r)
-    if PRECO_SOURCES_JSON:
-        try:
-            for item in json.loads(PRECO_SOURCES_JSON):
-                u = item.get("url") or item.get("search_url") or ""
-                r = source_domain_root(u)
-                if r:
-                    doms.add(r)
-        except Exception:
-            pass
-    return doms
-
-CIDADES_EXTERIORES = {
-    "jundiai", "cubatao", "redmond", "washington", "new york", "california", "florida",
-    "texas", "miami", "los angeles", "london", "madrid", "lisboa", "paris",
-}
-
-
-def score_fonte(f: Fonte) -> float:
-    s = 0
-    if f.alias_empresa:
-        s += 34
-    if f.cidade_confirmada:
-        s += 18
-    elif f.estado_confirmado:
-        s += 8
-    if f.atual:
-        s += 18
-    elif not f.data_publicacao:
-        s -= 8
-    if f.direta:
-        s += 7
-    if len(f.conteudo) >= 1000:
-        s += 5
-    if f.escopo == "local":
-        s += 6
-    elif f.escopo == "corporativo":
-        s += 4
-    d = f.dominio
-    d_root = source_domain_root(f.url) or d
-
-    # 1. Bônus para domínio oficial da entidade configurada (dinâmico e multinicho)
-    doms_oficiais = dominios_oficiais_configurados()
-    if d in doms_oficiais or d_root in doms_oficiais:
-        s += 8 * 0.85
-    else:
-        # 2. Domínios de autoridade institucional / regulação / jornalismo geral
-        for dom, peso in DOMINIOS_PRIORITARIOS.items():
-            if d == dom or dom in d:
-                s += 8 * peso
-                break
-    sinais = f.sinais
-    s += min(10, 2 * len(sinais))
-    return s
-
-
-def classificar_escopo(texto: str, corporativo: bool) -> Tuple[str, bool, bool]:
-    c, e = cidade_ok(texto), estado_ok(texto)
-    n = normalizar(texto)
-    exterior = any(termo(n, x) for x in CIDADES_EXTERIORES)
-    if exterior and not (c or e):
-        return "global", c, e
-    if c:
-        return "local", c, e
-    if e:
-        return "nacional", c, e
-    if corporativo:
-        return "corporativo", c, e
-    return "incerto", c, e
-
-
-def sinais_deterministicos(texto: str) -> List[str]:
-    n = normalizar(texto)
-    regras = {
-        "preço": ["preco", "promocao", "oferta", "desconto", "r$"],
-        "reputação": ["reclamacao", "reclame", "avaliacao", "nota", "queixa"],
-        "atendimento": ["atendimento", "fila", "demora", "suporte", "servico"],
-        "expansão": ["inaugur", "nova unidade", "nova loja", "expansao", "filial"],
-        "digital": ["app", "aplicativo", "delivery", "e-commerce", "ecommerce", "plataforma"],
-        "marketing": ["campanha", "publicidade", "patrocin", "evento", "marketing"],
-        "pessoas": ["vaga", "contratacao", "emprego", "recrut", "funcionario"],
-        "regulação": ["procon", "multa", "fiscalizacao", "sanitaria", "anvisa", "processo"],
-        "produto": ["produto", "lancamento", "catalogo", "servico", "cardapio"],
-        "parceria": ["parceria", "acordo", "joint venture", "fornecedor"],
-    }
-    out = []
-    for tag, palavras in regras.items():
-        if any(p in n for p in palavras):
-            out.append(tag)
-    return out
-
-
-def transformar(raw: Dict[str, Any], idx: int) -> Optional[Fonte]:
-    titulo = str(raw.get("titulo", "")).strip()
-    url = url_normalizada(str(raw.get("url", "")).strip())
-    snippet = str(raw.get("conteudo", "")).strip()
-    if not url:
-        return None
-    texto = f"{titulo}\n{url}\n{snippet}"
-    alvo = str(raw.get("alvo") or "").strip()
-    if alvo != "mercado" and identidade_conflitante(texto):
-        return None
-    a = alias_empresa(texto)
-    if not a and alvo and alvo != "mercado" and not termo(texto, alvo):
-        return None
-    if not a and alvo and alvo != "mercado":
-        a = alvo
-    if not a and alvo != "mercado":
-        return None
-    corporativo = any(k in dominio(url) for k in [normalizar(x).replace(" ", "") for x in [EMPRESA_ALVO, alvo, "grupo", "corporate"] if x])
-    escopo, c, e = classificar_escopo(texto, corporativo)
-    if alvo == "mercado":
-        escopo = "mercado" if not c else "local"
-    elif alvo and alvo != EMPRESA_ALVO and alvo != "mercado" and termo(texto, alvo):
-        # Evidência de concorrente: pode ser nacional/corporativa, mas não deve ser confundida com a empresa-alvo.
-        escopo = "concorrente" if not c else "local"
-    else:
-        # Empresa-alvo: rejeitar fontes geograficamente incompatíveis.
-        if CIDADE and escopo == "global":
-            return None
-        if CIDADE and escopo == "incerto" and not corporativo:
-            return None
-    data, tipo, d = data_publicacao(raw)
-    if d and d.year < ANO_MINIMO_HISTORICO:
-        return None
-    sinais = sinais_deterministicos(texto)
-    f = Fonte(
-        id=idx,
-        titulo=titulo or url,
-        url=url,
-        origem=str(raw.get("origem", "web")),
-        categoria=str(raw.get("categoria", "geral")),
-        entidade=alvo or a or "mercado",
-        conteudo=snippet,
-        resumo_busca=snippet,
-        data_publicacao=data,
-        data_tipo=tipo,
-        atual=bool(d and d.year >= ANO_MINIMO_ATUAL),
-        direta=False,
-        alias_empresa=a,
-        cidade_confirmada=c,
-        estado_confirmado=e,
-        escopo=escopo,
-        fingerprint=sha1(normalizar(titulo + " " + snippet[:2400] + " " + url)),
-        dominio=dominio(url),
-        sinais=sinais,
-    )
-    f.confianca = min(1.0, 0.45 + (0.2 if a else 0) + (0.15 if c else 0) + (0.12 if e else 0) + (0.08 if d else 0))
-    f.score = score_fonte(f)
-    return f
-
-
-def deduplicar(fontes: List[Fonte]) -> List[Fonte]:
-    vistos_url, vistos_fp = set(), set()
-    out = []
-    for f in sorted(fontes, key=lambda x: x.score, reverse=True):
-        if f.url in vistos_url or f.fingerprint in vistos_fp:
-            continue
-        vistos_url.add(f.url)
-        vistos_fp.add(f.fingerprint)
-        out.append(f)
-    for i, f in enumerate(out, 1):
-        f.id = i
-    return out
+# Reexportados diretamente de domain.sources:
+# dominios_oficiais_configurados, score_fonte, classificar_escopo,
+# sinais_deterministicos, transformar, deduplicar, DOMINIOS_PRIORITARIOS, CIDADES_EXTERIORES
 
 # ============================================================
 # 7. EXTRAÇÃO DIRETA (WEB EXTRACTION BINDINGS)
@@ -1084,421 +530,16 @@ def extrair_pagina(url: str) -> Dict[str, Any]:
     return _web_extrair_pagina(url, mgr=_PLAYWRIGHT_MGR, session=get_http_session())
 
 
-def enriquecer(fontes: List[Fonte]) -> List[Fonte]:
-    alvo_count = min(len(fontes), MAX_ENRIQUECIMENTO)
-    _IO_STATS["enrich_tasks"] = alvo_count
-    t_start = time.perf_counter()
-
-    res = _web_enriquecer(
-        fontes=fontes,
-        max_enriquecimento=MAX_ENRIQUECIMENTO,
-        max_workers=ENRICH_MAX_WORKERS,
-        max_fontes_finais=MAX_FONTES_FINAIS,
-        mgr=_PLAYWRIGHT_MGR,
-        session=get_http_session(),
-        parse_data_fn=parse_data,
-        alias_empresa_fn=alias_empresa,
-        cidade_ok_fn=cidade_ok,
-        estado_ok_fn=estado_ok,
-        sinais_fn=sinais_deterministicos,
-        score_fonte_fn=score_fonte,
-    )
-
-    _IO_STATS["enrich_time"] = time.perf_counter() - t_start
-    logger.info("[ENRIQUECIMENTO] %d fontes enriquecidas em %.2fs", alvo_count, _IO_STATS["enrich_time"])
-    return res
+# (enriquecer reexportado diretamente do pacote pipeline)
 
 # ============================================================
-# 8. MONITORAMENTO DE PREÇOS E PROMOÇÕES
+# 8. MONITORAMENTO DE PREÇOS E PROMOÇÕES (PRICING BINDINGS)
 # ============================================================
-
-MONEY_RE = re.compile(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:\.[0-9]{2}))", re.I)
-
-
-def _walk_json(obj: Any, limit: int = 10000) -> Iterable[Dict[str, Any]]:
-    stack = [obj]
-    seen = 0
-    while stack and seen < limit:
-        cur = stack.pop()
-        seen += 1
-        if isinstance(cur, dict):
-            yield cur
-            stack.extend(cur.values())
-        elif isinstance(cur, list):
-            stack.extend(cur)
-
-
-def _extract_price_from_obj(obj: Dict[str, Any]) -> Optional[float]:
-    keys = ["price", "lowPrice", "salePrice", "sellingPrice", "bestPrice", "currentPrice", "value"]
-    for key in keys:
-        if key in obj:
-            p = parse_money(obj.get(key))
-            if p is not None and p > 0:
-                return p
-    offers = obj.get("offers")
-    if isinstance(offers, dict):
-        for key in ["price", "lowPrice", "priceSpecification"]:
-            val = offers.get(key)
-            if isinstance(val, dict):
-                p = _extract_price_from_obj(val)
-                if p is not None:
-                    return p
-            else:
-                p = parse_money(val)
-                if p is not None and p > 0:
-                    return p
-    if isinstance(offers, list):
-        for item in offers:
-            if isinstance(item, dict):
-                p = _extract_price_from_obj(item)
-                if p is not None:
-                    return p
-    return None
-
-
-def _schema_types(obj: Dict[str, Any]) -> set:
-    vals=obj.get("@type") or obj.get("type")
-    if isinstance(vals,str): return {normalizar(vals)}
-    if isinstance(vals,list): return {normalizar(v) for v in vals if isinstance(v,str)}
-    return set()
-
-
-def _plausible_price(name: str, price: Optional[float], context: str = "") -> bool:
-    if price is None or price<=0 or price>1_000_000:
-        return False
-    n=normalizar(name+" "+context)
-    bad=["pib","receita","lucro","investimento","caixa","milhoes","milhões","bilhoes","bilhões","cotacao","cotação","dividend","acoes","ações","salario","salário","vaga","emprego","patrimonio","patrimônio"]
-    return not any(x in n for x in bad)
-
-
-def _price_item_confidence(obj: Dict[str, Any], page_type: str, name: str, price: Optional[float]) -> float:
-    if not name or price is None or price<=0: return 0.0
-    types=_schema_types(obj)
-    score=0.40
-    if types & PRICE_PRODUCT_SCHEMA_TYPES: score+=0.35
-    if any(obj.get(k) for k in ["sku","productId","gtin","gtin13","mpn"]): score+=0.10
-    if page_type in {"COMMERCIAL_CANDIDATE","ROOT_CANDIDATE"}: score+=0.10
-    if obj.get("brand"): score+=0.05
-    return min(score,1.0)
-
-
-def _extract_product_objects(html: str, source: str, role: str, page_url: str, location_note: str = "") -> List[PriceItem]:
-    soup=BeautifulSoup(html or "","html.parser")
-    title=soup.title.get_text(" ",strip=True) if soup.title else ""
-    body=soup.get_text(" ",strip=True)[:7000]
-    page_type=_price_page_type(page_url,title,body)
-    if page_type in {"BLOCKED","ARTICLE_OR_EMPLOYMENT"}:
-        return []
-    found={}
-    for s in soup.find_all("script"):
-        raw=s.string or s.get_text(" ",strip=True)
-        if not raw or len(raw)<20: continue
-        objs=[]
-        if s.get("type")=="application/ld+json":
-            try: objs=list(_walk_json(json.loads(raw),12000))
-            except Exception: objs=[]
-        elif page_type=="COMMERCIAL_CANDIDATE":
-            for m in re.finditer(r"\{.{0,5000}?(?:price|salePrice|sellingPrice).{0,5000}?\}",raw,flags=re.I|re.S):
-                try: objs.append(json.loads(m.group(0)))
-                except Exception: pass
-        for obj in objs:
-            types=_schema_types(obj)
-            if types and not (types & PRICE_PRODUCT_SCHEMA_TYPES) and not ("offers" in obj and obj.get("name")):
-                continue
-            name=str(obj.get("name") or obj.get("productName") or obj.get("title") or "").strip()
-            price=_extract_price_from_obj(obj)
-            if not name or not _plausible_price(name,price,str(obj.get("description") or "")): continue
-            conf=_price_item_confidence(obj,page_type,name,price)
-            if conf<0.70: continue
-            brand=obj.get("brand")
-            if isinstance(brand,dict): brand=brand.get("name","")
-            old_price=None
-            for k2 in ["oldPrice","listPrice","compareAtPrice","originalPrice"]:
-                if k2 in obj:
-                    old_price=parse_money(obj.get(k2))
-                    if old_price: break
-            unit=str(obj.get("unit") or obj.get("size") or obj.get("quantity") or "").strip()
-            sku=str(obj.get("sku") or obj.get("productId") or obj.get("gtin") or obj.get("gtin13") or obj.get("mpn") or "").strip()
-            key=normalizar(f"{name} {brand or ''} {unit} {sku}")
-            item=PriceItem(source,role,name,page_url,price,old_price,bool(old_price and old_price>price),str(brand or ""),unit,sku,location_note=location_note,evidence_url=page_url)
-            item.page_type=page_type
-            item.price_confidence=conf
-            found.setdefault(key,item)
-    if page_type in {"COMMERCIAL_CANDIDATE","ROOT_CANDIDATE"}:
-        for node in soup.find_all(string=MONEY_RE):
-            parent=node.parent
-            if not parent: continue
-            container=parent
-            for _ in range(2):
-                if getattr(container,"parent",None): container=container.parent
-            context=container.get_text(" ",strip=True)
-            prices=[parse_money(m.group(1)) for m in MONEY_RE.finditer(context)]
-            if not prices: continue
-            price=prices[-1]
-            links=[a.get_text(" ",strip=True) for a in container.find_all("a") if a.get_text(" ",strip=True)]
-            candidate=" ".join(links[:3]).strip()
-            if len(candidate)<5: candidate=re.sub(r"R\$\s*[0-9.,]+"," ",context)
-            candidate=re.sub(r"\s+"," ",candidate).strip()
-            if not (5<=len(candidate)<=180) or not _plausible_price(candidate,price,context): continue
-            if not any(k in normalizar(context) for k in ["comprar","carrinho","produto","oferta","promocao","promoção","preco","preço","servico","serviço","cardapio","reservar"]): continue
-            key=normalizar(candidate)
-            item=PriceItem(source,role,candidate,page_url,price,None,False,"","", "",location_note=location_note,evidence_url=page_url)
-            item.page_type=page_type
-            item.price_confidence=0.78
-            found.setdefault(key,item)
-    return list(found.values())
-
-
-def _price_page_html(url: str, use_playwright: bool = True) -> Tuple[str, str]:
-    global _PRICE_FETCH_COUNT
-    key = url_normalizada(url)
-    cached = _PRICE_HTTP_CACHE.get(key)
-    if cached and time.time() - cached[2] < 21600:
-        return cached[0], cached[1]
-    if _PRICE_FETCH_COUNT >= PRICE_MAX_HTTP_FETCHES:
-        logger.info("[PREÇO BUDGET] limite de fetch atingido: %d", PRICE_MAX_HTTP_FETCHES)
-        return "", url
-    _PRICE_FETCH_COUNT += 1
-    try:
-        session = get_http_session()
-        r = session.get(key, timeout=min(REQUEST_TIMEOUT, 12), allow_redirects=True)
-        if r.ok and "html" in (r.headers.get("content-type") or "").lower() and len(r.text) > 1000:
-            _PRICE_HTTP_CACHE[key]=(r.text, r.url, time.time())
-            return r.text, r.url
-    except Exception as e:
-        logger.debug("[PREÇO HTTP] %s", str(e)[:120])
-    # Playwright somente em URL fortemente candidata a comercial/dinâmica.
-    if not (use_playwright and PRECO_USAR_PLAYWRIGHT):
-        return "", key
-    if _commercial_signal_url(key) < 0.55 or _is_non_commercial_url(key):
-        return "", key
-    html, final_url = _PLAYWRIGHT_MGR.extrair_html_preco(key, timeout=PRICE_PLAYWRIGHT_TIMEOUT)
-    if html:
-        _PRICE_HTTP_CACHE[key] = (html, final_url, time.time())
-        return html, final_url
-    return "", key
-
-
-def _buscar_preco_site(url_template: str, query: str) -> str:
-    return url_template.format(query=quote_plus(query), q=quote_plus(query), termo=quote_plus(query))
-
-
-def coletar_itens_preco_fonte(source: Dict[str, Any], query: str = "") -> List[PriceItem]:
-    url = source.get("url", "")
-    role = source.get("role", "competitor")
-    name = source.get("name", "Fonte")
-    location_note = str(source.get("location_note", ""))
-
-    engine = os.getenv("EXTRACTION_ENGINE", EXTRACTION_ENGINE).strip().lower()
-    if engine not in {"legacy", "generic", "shadow"}:
-        engine = "legacy"
-
-    # Se a fonte contiver arquivo ou payload de OCR bruto (folhetos, tablóides, encartes)
-    ocr_origem = source.get("ocr_path") or source.get("ocr_json") or source.get("deteccoes")
-    if ocr_origem:
-        try:
-            from extractors.bridge import executar_pipeline_extracao
-            if engine == "generic":
-                res = executar_pipeline_extracao(ocr_origem, engine="generic", source=name, role=role, page_url=url)
-                return res.get("price_items", [])[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
-            elif engine == "shadow":
-                res_leg = executar_pipeline_extracao(ocr_origem, engine="legacy", source=name, role=role, page_url=url)
-                items_leg = res_leg.get("price_items", [])
-                try:
-                    res_gen = executar_pipeline_extracao(ocr_origem, engine="generic", source=name, role=role, page_url=url)
-                    items_gen = res_gen.get("price_items", [])
-                    logger.info("[SHADOW EXTRACT] %s -> Legacy: %d itens | Generic: %d itens", name, len(items_leg), len(items_gen))
-                    try:
-                        from extractors.canary import comparar_documento_canary
-                        from extractors.canary_history import CanaryHistoryTracker, calcular_hash_conteudo_ou_arquivo
-                        doc_rep = comparar_documento_canary(items_leg, items_gen, documento_id=str(ocr_origem))
-                        h = calcular_hash_conteudo_ou_arquivo(ocr_origem)
-                        tracker = CanaryHistoryTracker()
-                        tracker.registrar_observacao(
-                            run_id=f"shadow_{int(time.time())}",
-                            document_id=Path(str(ocr_origem)).name if isinstance(ocr_origem, (str, Path)) else "payload",
-                            document_hash=h,
-                            source=name,
-                            doc_report=doc_rep,
-                            generic_crashed=False
-                        )
-                    except Exception as e_hist:
-                        logger.debug("[SHADOW HISTORICO] %s", str(e_hist)[:100])
-                except Exception as e_gen:
-                    logger.warning("[SHADOW EXTRACT FALHA GENERIC] %s: %s", name, str(e_gen)[:120])
-                    try:
-                        from extractors.canary import CanaryDocumentReport
-                        from extractors.canary_history import CanaryHistoryTracker, calcular_hash_conteudo_ou_arquivo
-                        h = calcular_hash_conteudo_ou_arquivo(ocr_origem)
-                        tracker = CanaryHistoryTracker()
-                        tracker.registrar_observacao(
-                            run_id=f"shadow_{int(time.time())}",
-                            document_id=Path(str(ocr_origem)).name if isinstance(ocr_origem, (str, Path)) else "payload",
-                            document_hash=h,
-                            source=name,
-                            doc_report=CanaryDocumentReport(documento_id=str(ocr_origem), total_legacy=len(items_leg)),
-                            generic_crashed=True
-                        )
-                    except Exception:
-                        pass
-                return items_leg[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
-            else:
-                res_leg = executar_pipeline_extracao(ocr_origem, engine="legacy", source=name, role=role, page_url=url)
-                return res_leg.get("price_items", [])[:PRECO_MAX_OCR_ITENS_POR_PAGINA]
-        except Exception as e:
-            if engine == "generic":
-                logger.error("[EXTRACTION GENERIC ERRO] %s: %s", name, str(e))
-                raise
-            logger.warning("[EXTRACTION OCR] %s", str(e)[:160])
-
-    # Fluxo Web HTML padrão (LEGACY)
-    if query and source.get("search_url"):
-        url = _buscar_preco_site(str(source["search_url"]), query)
-    if not url:
-        return []
-    if _is_blocked_price_domain(url):
-        logger.info("[PREÇOS] fonte bloqueada/não comercial: %s", url)
-        return []
-    html, final_url = _price_page_html(url, use_playwright=True)
-    if not html:
-        logger.warning("[PREÇOS] sem HTML: %s", url)
-        return []
-    items = _extract_product_objects(html, name, role, final_url, location_note)
-    if not items and not is_price_candidate_url(final_url) and PRICE_REQUIRE_COMMERCIAL_SIGNAL:
-        logger.info("[PREÇOS] página sem sinais comerciais/produtos: %s", final_url)
-        return []
-    if query:
-        for it in items:
-            it.competitor = name
-    return items[:PRECO_MAX_RESULTADOS_POR_BUSCA]
-
-
-def _playwright_session_search(base_url: str, search_url_template: str, queries: List[str], location_hint: str = "") -> Dict[str, List[PriceItem]]:
-    """Mantém uma única sessão Chromium por concorrente para preservar cookies/localização."""
-    if not PRECO_USAR_PLAYWRIGHT:
-        return {}
-    return _PLAYWRIGHT_MGR.session_search(
-        base_url,
-        search_url_template,
-        queries,
-        location_hint=location_hint,
-        buscar_preco_fn=_buscar_preco_site,
-        extract_products_fn=_extract_product_objects,
-        cidade=CIDADE,
-        normalizar_fn=normalizar,
-        max_results=PRECO_MAX_RESULTADOS_POR_BUSCA,
-    )
-
-
-def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None, raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> Dict[str, Any]:
-    if not MONITORAR_PRECOS:
-        return {"enabled": False, "reason": "monitoramento desativado"}
-    series_temporais = {}
-    if memoria:
-        try:
-            raw_series = memoria.get_price_series(hoje=HOJE)
-            for (ent, s_dom, p_key), s_data in raw_series.items():
-                d = dict(s_data)
-                d["entity"] = ent
-                d["source_domain"] = s_dom
-                d["product_key"] = p_key
-                series_temporais[f"{ent}::{s_dom}::{p_key}"] = d
-        except Exception as e:
-            logger.warning("[PRICE SERIES] Falha ao recuperar séries de preços: %s", str(e)[:100])
-    sources=mesclar_price_sources(fontes, raw_results=raw_results, tavily_client=tavily_client)
-    logger.info("[PREÇOS] fontes candidatas=%d | budget_fetches=%d", len(sources), PRICE_MAX_HTTP_FETCHES)
-    for _src in sources[:12]:
-        logger.info("[PREÇOS] candidato %s | %s | %s", _src.get("role"), _src.get("name"), _src.get("url"))
-    targets=[x for x in sources if x.get("role")=="target"]
-    competitors=[x for x in sources if x.get("role")=="competitor"]
-    if not targets:
-        logger.warning("[PREÇOS] nenhuma fonte comercial do alvo foi descoberta. Configure PRECO_ALVO_URLS/PRICE_SOURCES_JSON ou verifique buscas comerciais.")
-        return {"enabled":True,"status":"sem_fonte_de_preco_do_alvo","comparacoes":[],"fontes_descobertas":sources,"series_temporais":series_temporais}
-    if not competitors:
-        return {"enabled":True,"status":"sem_fontes_de_concorrentes","comparacoes":[],"fontes_descobertas":sources,"series_temporais":series_temporais}
-    item_cache: Dict[str,List[PriceItem]] = {}
-    def cached_items(src: Dict[str, Any]) -> List[PriceItem]:
-        key=f"{src.get('role','')}|{src.get('name','')}|{src.get('domain','')}|{src.get('url','')}"
-        if key not in item_cache:
-            item_cache[key]=coletar_itens_preco_fonte(src)
-        return item_cache[key]
-    # Deduplica por entidade/domínio e limita fontes para evitar crawler explosivo.
-    def compact_sources(arr: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
-        out=[]; seen=set()
-        for x in sorted(arr,key=lambda s: _commercial_signal_url(s.get('url','')), reverse=True):
-            k=(normalizar(x.get('name','')), source_domain_root(x.get('url','')), x.get('role',''))
-            if not k[1] or k in seen: continue
-            seen.add(k); out.append(x)
-            if len([y for y in out if y.get('role')==x.get('role')])>=PRICE_MAX_DOMAINS_PER_ENTITY*max(1,len(CONCORRENTES)+1):
-                break
-        return out
-    targets=compact_sources(targets)[:PRICE_MAX_DOMAINS_PER_ENTITY]
-    competitors=compact_sources(competitors)
-    target_items=[]
-    for src in targets:
-        target_items.extend(cached_items(src))
-    uniq={}
-    for it in target_items:
-        if it.key(): uniq.setdefault(it.key(),it)
-    target_items=[x for x in uniq.values() if getattr(x,"price_confidence",0.0)>=0.70]
-    target_items=list(target_items)[:MAX_PRECO_ITENS]
-    if not target_items:
-        return {"enabled":True,"status":"sem_produtos_alvo","comparacoes":[],"produtos_alvo":0,"fontes_descobertas":sources,"series_temporais":series_temporais}
-    comparacoes=[]
-    for comp in competitors:
-        catalog=cached_items(comp)
-        search_template=str(comp.get("search_url","")).strip()
-        session_results={}
-        queries=[" ".join(x for x in [t.brand,t.name,t.unit] if x).strip() for t in target_items[:MAX_BUSCAS_PRECO_CONCORRENTE]] if search_template else []
-        if search_template and PRECO_USAR_PLAYWRIGHT:
-            session_results=_playwright_session_search(str(comp.get("url","")),search_template,queries,str(comp.get("location_note","")))
-        for target in target_items[:MAX_BUSCAS_PRECO_CONCORRENTE]:
-            q=" ".join(x for x in [target.brand,target.name,target.unit] if x).strip()
-            results=list(catalog)
-            if session_results.get(q): results.extend(session_results[q])
-            if not results and search_template: results=coletar_itens_preco_fonte(comp,q)
-            if not results:
-                comparacoes.append({"produto_alvo":target.name,"marca":target.brand,"unidade":target.unit,"alvo_preco":target.price,"alvo_promocao":target.promotion,"concorrente":comp.get("name",""),"concorrente_produto":"","concorrente_preco":None,"similaridade":0.0,"dif_percent":None,"mais_barato":"não encontrado","confianca_match":"baixa","url_alvo":target.url,"url_concorrente":comp.get("url",""),"location_note":comp.get("location_note","")})
-                continue
-            results=[r for r in results if getattr(r,"price_confidence",0.0)>=0.70 and _price_page_type(r.url,getattr(r,"page_type",""),r.name) not in {"BLOCKED","ARTICLE_OR_EMPLOYMENT"}]
-            if not results:
-                comparacoes.append({"produto_alvo":target.name,"marca":target.brand,"unidade":target.unit,"alvo_preco":target.price,"alvo_promocao":target.promotion,"concorrente":comp.get("name",""),"concorrente_produto":"","concorrente_preco":None,"similaridade":0.0,"match_class":"nao_encontrado","dif_percent":None,"mais_barato":"não encontrado","confianca_match":"baixa","url_alvo":target.url,"url_concorrente":comp.get("url",""),"location_note":comp.get("location_note","")})
-                continue
-            ranked=sorted(((similaridade_produto(target,r),r) for r in results),key=lambda x:x[0],reverse=True)
-            sim,best=ranked[0]
-            row={"produto_alvo":target.name,"marca":target.brand,"unidade":target.unit,"alvo_preco":target.price,"alvo_old_price":target.old_price,"alvo_promocao":target.promotion,"concorrente":comp.get("name",""),"concorrente_produto":best.name,"concorrente_preco":best.price,"concorrente_old_price":best.old_price,"concorrente_promocao":best.promotion,"similaridade":round(sim,3),"url_alvo":target.url,"url_concorrente":best.url,"location_note":best.location_note or comp.get("location_note",""),"canonical_product_id":sha1(normalizar(f"{target.brand}|{target.name}|{target.unit}|{target.sku}"))[:24]}
-            if sim>=PRECO_MIN_SIMILARIDADE and target.price and best.price:
-                row["dif_percent"]=round((best.price-target.price)/target.price*100,2)
-                if abs(row["dif_percent"]) > 300:
-                    row["dif_percent"]=None
-                    row["mais_barato"]="não comparável"
-                    row["match_class"]="revisao_necessaria"
-                    row["confianca_match"]="baixa"
-                else:
-                    row["mais_barato"]="concorrente" if best.price<target.price else "alvo" if target.price<best.price else "igual"
-                    row["match_class"]="confirmado" if sim>=0.90 else "provavel"
-                    row["confianca_match"]="alta" if sim>=0.88 else "media"
-            else:
-                row["dif_percent"]=None; row["mais_barato"]="não comparável"; row["match_class"]="nao_comparavel"; row["confianca_match"]="baixa"
-            comparacoes.append(row)
-    snapshots=[]
-    for src in targets+competitors:
-        entity=str(src.get("name") or "")
-        role=str(src.get("role") or "")
-        items=cached_items(src)
-        for it in items:
-            snapshots.append({"entity":entity,"role":role,"source_domain":dominio(it.url or src.get("url","")),"product_key":it.key(),"product_name":it.name,"brand":it.brand,"unit":it.unit,"price":it.price,"old_price":it.old_price,"promotion":it.promotion,"url":it.url,"location_note":it.location_note})
-    history=memoria.save_price_snapshots(RUN_ID,snapshots) if memoria else {"previous_run":None,"gravados":0,"mudancas":[]}
-    comparable=[x for x in comparacoes if x.get("dif_percent") is not None]
-    by_comp={}
-    for row in comparable: by_comp.setdefault(row["concorrente"],[]).append(row)
-    guerra=[]
-    for comp, rows in by_comp.items():
-        ds=[r["dif_percent"] for r in rows]
-        guerra.append({"concorrente":comp,"comparaveis":len(rows),"concorrente_mais_barato":sum(r["mais_barato"]=="concorrente" for r in rows),"alvo_mais_barato":sum(r["mais_barato"]=="alvo" for r in rows),"empates":sum(r["mais_barato"]=="igual" for r in rows),"dif_media_percent":round(sum(ds)/len(ds),2),"dif_mediana_percent":round(sorted(ds)[len(ds)//2],2),"maior_gap_percent":round(max(ds,key=lambda z:abs(z)),2)})
-    guerra.sort(key=lambda x:(x["concorrente_mais_barato"],abs(x["dif_media_percent"])),reverse=True)
-    return {"enabled":True,"status":"ok" if comparable else "sem_matches_confiaveis","produtos_alvo":len(target_items),"comparacoes":comparacoes,"comparaveis":len(comparable),"alvo_mais_barato":sum(x["mais_barato"]=="alvo" for x in comparable),"concorrente_mais_barato":sum(x["mais_barato"]=="concorrente" for x in comparable),"promocoes_alvo":sum(bool(x.get("alvo_promocao")) for x in comparacoes),"promocoes_concorrentes":sum(bool(x.get("concorrente_promocao")) for x in comparacoes),"maiores_gaps":sorted(comparable,key=lambda x:abs(x.get("dif_percent",0)),reverse=True)[:15],"fontes":sources,"guerra_de_precos":guerra,"historico":history,"series_temporais":series_temporais,"snapshots_observados":len(snapshots),"metodologia":"descoberta automática de domínios comerciais + expansão de homepage/sitemap/links comerciais; catálogo direto e pesquisa por produto quando disponível; matching por nome/marca/unidade; somente matches acima do limiar entram na comparação; snapshots persistidos em SQLite para histórico de guerra de preços."}
-
+# Símbolos e delegatórios reexportados do pacote pricing:
+# (MONEY_RE, _walk_json, _extract_price_from_obj, _schema_types,
+#  _plausible_price, _price_item_confidence, _extract_product_objects,
+#  _price_page_html, _buscar_preco_site, coletar_itens_preco_fonte,
+#  _playwright_session_search, comparar_precos)
 
 # ============================================================
 # 8. MEMÓRIA HISTÓRICA SQLITE
@@ -1544,11 +585,11 @@ class MemoriaSniper(_StorageMemoriaSniper):
         )
 
 # ============================================================
-# 9. MOTOR DE EVENTOS, SINAIS E SCORES
+# 9. MOTOR DE EVENTOS, SINAIS E SCORES (DOMAIN BINDINGS & ADAPTERS)
 # ============================================================
-
-def recencia_score(f: Fonte, hoje: Optional[datetime] = None) -> float:
-    return _domain_recencia_score(f, hoje or HOJE)
+# (Reexportados diretamente de domain.events / domain.scoring:
+#  recencia_score, medir_dimensoes, score_ambiente_competitivo,
+#  classificar_sinal, acao_evento, gerar_sinais_deterministicos, score_momentum)
 
 
 def _primary_event_kind(f: Fonte) -> Tuple[Optional[str], List[str]]:
@@ -1570,36 +611,12 @@ def criar_eventos(fontes: List[Fonte]) -> List[Dict[str, Any]]:
     )
 
 
-def medir_dimensoes(fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    return _domain_medir_dimensoes(fontes, events)
-
-
-def score_ambiente_competitivo(dimensoes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    return _domain_score_ambiente_competitivo(dimensoes)
-
-
 def score_pressao_competitiva(fontes: List[Fonte], events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return _domain_score_pressao_competitiva(fontes, events, empresa_alvo=EMPRESA_ALVO)
 
 
 def score_vulnerabilidade_empresa(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return _domain_score_vulnerabilidade_empresa(events, empresa_alvo=EMPRESA_ALVO)
-
-
-def classificar_sinal(event: Dict[str, Any]) -> str:
-    return _domain_classificar_sinal(event)
-
-
-def acao_evento(kind: str) -> str:
-    return _domain_acao_evento(kind)
-
-
-def gerar_sinais_deterministicos(fontes: List[Fonte], events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return _domain_gerar_sinais_deterministicos(fontes, events)
-
-
-def score_momentum(events: List[Dict[str, Any]], fontes: List[Fonte]) -> int:
-    return _domain_score_momentum(events, fontes, hoje=HOJE)
 
 # ============================================================
 # 10. LLM ESTRUTURADO (LLM BINDINGS)
@@ -1697,7 +714,7 @@ def main() -> None:
 
     try:
         tavily_client = inicializar_tavily()
-        brutas = coletar_tudo(tavily_client)
+        brutas = coletar_tudo(tavily_client, session=get_http_session(), guard=_TAVILY_GUARD, io_stats=_IO_STATS)
         if not brutas:
             logger.error("[FATAL] Nenhuma busca retornou resultado.")
             return
@@ -1712,7 +729,7 @@ def main() -> None:
             logger.error("[FATAL] Nenhuma fonte passou por identidade/localização/data.")
             return
 
-        fontes = enriquecer(fontes)
+        fontes = enriquecer(fontes, mgr=_PLAYWRIGHT_MGR, session=get_http_session(), io_stats=_IO_STATS)
         for i, f in enumerate(fontes, 1):
             f.id = i
 
@@ -1834,221 +851,11 @@ def main() -> None:
         _PLAYWRIGHT_MGR.close_all()
 
 
-def resolver_fixture_fontes_offline(base_dir: Path) -> List[Dict[str, Any]]:
-    """Localiza determinística e estavelmente a fixture canônica de fontes para replay."""
-    # 1. Override explícito via variável de ambiente
-    env_override = os.getenv("OFFLINE_REPLAY_FIXTURE_PATH", "").strip()
-    if env_override:
-        p = Path(env_override)
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8"))
-        raise FileNotFoundError(f"[REPLAY OFFLINE ERRO] Fixture de ambiente não encontrada: {env_override}")
-
-    # 2. Fixture canônica fixa do repositório (congelada nas Fases 19-26)
-    canonical_fixture = base_dir / "sniper_resultados" / "20260819_162028" / "fontes.json"
-    if canonical_fixture.exists():
-        return json.loads(canonical_fixture.read_text(encoding="utf-8"))
-
-    # 3. Falha explícita se nenhuma fixture canônica existir
-    raise FileNotFoundError(f"[REPLAY OFFLINE ERRO] Fixture canônica de fontes não encontrada em: {canonical_fixture}")
-
-
-def executar_replay_offline(retornar_detalhes: bool = False) -> Union[int, Dict[str, Any]]:
-    """Executa benchmark determinístico e offline do pipeline interno utilizando fixtures locais."""
-    import socket
-
-    class OfflineNetworkGuard:
-        """Garante estruturalmente zero tráfego de rede durante o replay offline."""
-        def __init__(self):
-            self._orig_connect = socket.socket.connect
-            self._orig_create_connection = getattr(socket, "create_connection", None)
-
-        def __enter__(self):
-            def _blocked_connect(sock_self, address):
-                raise RuntimeError(f"[OFFLINE GUARD] Tentativa de conexão de rede BLOQUEADA durante --replay-offline para: {address}!")
-
-            def _blocked_create_connection(address, *args, **kwargs):
-                raise RuntimeError(f"[OFFLINE GUARD] Tentativa de conexão de rede BLOQUEADA durante --replay-offline para: {address}!")
-
-            socket.socket.connect = _blocked_connect
-            if self._orig_create_connection:
-                socket.create_connection = _blocked_create_connection
-            return self
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            socket.socket.connect = self._orig_connect
-            if self._orig_create_connection:
-                socket.create_connection = self._orig_create_connection
-
-    with OfflineNetworkGuard():
-        t_start = time.perf_counter()
-        base_dir = Path(__file__).resolve().parent
-        ocr_dir = base_dir / "dados_browser" / "ocr_bruto"
-        if not ocr_dir.exists():
-            print(f"[REPLAY OFFLINE ERRO] Diretório de OCR não encontrado: {ocr_dir}")
-            if retornar_detalhes:
-                return {"status": "FAIL", "retorno": 1, "erro": "Diretório de OCR não encontrado"}
-            return 1
-
-        ocr_files = sorted(list(ocr_dir.glob("*.json")))
-        if not ocr_files:
-            print(f"[REPLAY OFFLINE ERRO] Nenhum arquivo OCR encontrado em: {ocr_dir}")
-            if retornar_detalhes:
-                return {"status": "FAIL", "retorno": 1, "erro": "Nenhum arquivo OCR encontrado"}
-            return 1
-
-        from extractors.bridge import carregar_ocr_bruto
-        from extractors.adapters import FlyerProductAdapter
-
-        ad = FlyerProductAdapter()
-        raw_fontes_data = resolver_fixture_fontes_offline(base_dir)
-
-        # A. PARSING OCR (Carga das fixtures)
-        t0 = time.perf_counter()
-        raw_docs = [carregar_ocr_bruto(f) for f in ocr_files]
-        t_parsing = (time.perf_counter() - t0) * 1000
-
-        # B. EXTRAÇÃO ESPACIAL REAL (Caminho de produção do FlyerProductAdapter, sem duplicações)
-        t0 = time.perf_counter()
-        extracted_entities = []
-        for d in raw_docs:
-            r = ad.processar_documento(d)
-            for e in r.entidades:
-                extracted_entities.append((e.entidade, e.valor, e.old_price, e.unidade, e.confianca))
-        t_extracao = (time.perf_counter() - t0) * 1000
-
-        # C. EVENTOS (Agrupamento canônico de evidências)
-        t0 = time.perf_counter()
-        fontes_objs = [
-            Fonte(
-                id=f["id"], titulo=f["titulo"], url=f["url"], origem=f.get("origem", "Web"),
-                categoria=f.get("categoria", "geral"), conteudo=f.get("conteudo", ""),
-                resumo_busca=f.get("resumo_busca", ""), data_publicacao=f.get("data_publicacao", ""),
-                data_tipo=f.get("data_tipo", "publicada"), atual=f.get("atual", False),
-                direta=f.get("direta", False), score=f.get("score", 0.0), confianca=f.get("confianca", 0.0),
-                alias_empresa=f.get("alias_empresa", ""), cidade_confirmada=f.get("cidade_confirmada", False),
-                estado_confirmado=f.get("estado_confirmado", False), escopo=f.get("escopo", "local"),
-                fingerprint=f.get("fingerprint", ""), dominio=f.get("dominio", ""),
-                sinais=f.get("sinais", []), entidade=f.get("entidade", "")
-            )
-            for f in raw_fontes_data
-        ]
-        eventos_gerados = _domain_criar_eventos(fontes_objs)
-        t_eventos = (time.perf_counter() - t0) * 1000
-
-        # D. PRICING & SIMILARIDADE (Resolução de catálogos multinicho parametrizada)
-        t0 = time.perf_counter()
-        target_name = EMPRESA_ALVO or "Empresa Alvo"
-        competitor_name = CONCORRENTES[0] if CONCORRENTES else "Concorrente"
-        target_items = [PriceItem(target_name, "target", e[0], "", e[1], old_price=e[2], unit=e[3]) for e in extracted_entities[:15]]
-        comp_items = [PriceItem(competitor_name, "competitor", e[0], "", e[1]*0.95, unit=e[3]) for e in extracted_entities[:15]]
-        comparacoes = []
-        for t in target_items:
-            ranked = sorted(((similaridade_produto(t, c), c) for c in comp_items), key=lambda x: x[0], reverse=True)
-            sim, best = ranked[0]
-            comparacoes.append((t.name, best.name, sim, (best.price - t.price)/t.price*100))
-        t_pricing = (time.perf_counter() - t0) * 1000
-
-        # E. SCORING DE FONTES (Ordenação e bônus de autoridade dinâmico)
-        t0 = time.perf_counter()
-        scored_fontes = []
-        for f in fontes_objs:
-            sc = score_fonte(f)
-            f.score = sc
-            scored_fontes.append(f)
-        scored_fontes = sorted(scored_fontes, key=lambda f: (f.score, f.atual, f.confianca), reverse=True)
-        t_scoring = (time.perf_counter() - t0) * 1000
-
-        # F. RENDERIZAÇÃO (Construção do payload determinístico e artefatos em memória)
-        t0 = time.perf_counter()
-        pacote_mock = {
-            "versao": APP_VERSION, "empresa": EMPRESA_ALVO, "resumo_executivo": ["Resumo replay offline"],
-            "sinais": [{"tipo": "RISCO", "titulo": "Sinal Replay", "descricao": "Desc"}],
-            "swot": {"forcas": ["F1"], "fraquezas": ["W1"], "oportunidades": ["O1"], "ameacas": ["T1"]}
-        }
-        ambiente_mock = {"score": 75, "pressao_competitiva": {"score": 35}, "momentum_mercado": 50, "vulnerabilidade_empresa": {"score": 20}}
-        html_out = gerar_html(pacote_mock, scored_fontes, eventos_gerados, ambiente_mock, {})
-        json_out = json.dumps([asdict(f) for f in scored_fontes])
-        t_render = (time.perf_counter() - t0) * 1000
-
-        t_total = (time.perf_counter() - t_start) * 1000
-
-        # Hash determinístico do replay sobre dados canônicos puros (invariante a clock de sistema)
-        replay_payload = {
-            "entidades": extracted_entities,
-            "eventos": eventos_gerados,
-            "fontes": [asdict(f) for f in scored_fontes],
-            "comparacoes": comparacoes,
-        }
-        sig = hashlib.sha256(json.dumps(replay_payload, sort_keys=True).encode("utf-8")).hexdigest()
-
-        print("=" * 70)
-        print("AGENTE SNIPER — OFFLINE REPLAY BENCHMARK OFICIAL")
-        print("=" * 70)
-        print(f"{'Etapa':<28} | {'Tempo (ms)':>12}")
-        print("-" * 44)
-        print(f"{'Parsing OCR':<28} | {t_parsing:12.2f}")
-        print(f"{'Extração Espacial (Produção)':<28} | {t_extracao:12.2f}")
-        print(f"{'Agrupamento de Eventos':<28} | {t_eventos:12.2f}")
-        print(f"{'Pricing & Similaridade':<28} | {t_pricing:12.2f}")
-        print(f"{'Scoring de Fontes':<28} | {t_scoring:12.2f}")
-        print(f"{'Renderização HTML/JSON':<28} | {t_render:12.2f}")
-        print("-" * 44)
-        print(f"{'TOTAL DO PIPELINE':<28} | {t_total:12.2f}")
-        print("=" * 70)
-        print(f"Entidades Canônicas:  {len(extracted_entities)}")
-        print(f"Eventos Consolidados: {len(eventos_gerados)}")
-        print(f"Fontes Avaliadas:     {len(scored_fontes)}")
-        print(f"Garantia de Rede:     OFFLINE (Zero I/O externo verificado)")
-        print(f"Output SHA-256:       {sig}")
-
-        # Validação obrigatória dos contratos antes de emitir PASS
-        erros_validacao = []
-        if len(extracted_entities) != 63:
-            erros_validacao.append(f"Entidades divergiram: {len(extracted_entities)} != 63")
-        if len(eventos_gerados) != 28:
-            erros_validacao.append(f"Eventos divergiram: {len(eventos_gerados)} != 28")
-        if len(scored_fontes) != 59:
-            erros_validacao.append(f"Fontes divergiram: {len(scored_fontes)} != 59")
-
-        if erros_validacao:
-            print("Status Replay:        FAIL")
-            for err in erros_validacao:
-                print(f"  - [ERRO CONTRATO] {err}")
-            print("=" * 70)
-            if retornar_detalhes:
-                return {
-                    "status": "FAIL",
-                    "retorno": 1,
-                    "erros": erros_validacao,
-                    "entidades": len(extracted_entities),
-                    "eventos": len(eventos_gerados),
-                    "fontes": len(scored_fontes),
-                    "sha256": sig,
-                }
-            return 1
-
-        print("Status Replay:        PASS (100% Determinístico)")
-        print("=" * 70)
-        if retornar_detalhes:
-            return {
-                "status": "PASS",
-                "retorno": 0,
-                "entidades": len(extracted_entities),
-                "eventos": len(eventos_gerados),
-                "fontes": len(scored_fontes),
-                "sha256": sig,
-                "timings_ms": {
-                    "parsing": t_parsing,
-                    "extracao": t_extracao,
-                    "eventos": t_eventos,
-                    "pricing": t_pricing,
-                    "scoring": t_scoring,
-                    "render": t_render,
-                    "total": t_total,
-                },
-            }
-        return 0
+# ============================================================
+# 15.1 OFFLINE REPLAY & BENCHMARK (PIPELINE BINDINGS)
+# ============================================================
+# (OfflineNetworkGuard, resolver_fixture_fontes_offline, executar_replay_offline
+#  reexportados de pipeline.replay)
 
 
 if __name__ == "__main__":

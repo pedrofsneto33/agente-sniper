@@ -79,6 +79,16 @@ from domain.profiles import (
     obter_perfil_nicho,
     listar_nichos_disponiveis,
 )
+from domain.sources import (
+    DOMINIOS_PRIORITARIOS,
+    CIDADES_EXTERIORES,
+    dominios_oficiais_configurados,
+    score_fonte,
+    classificar_escopo,
+    sinais_deterministicos,
+    transformar,
+    deduplicar,
+)
 
 __all__ = [
     "Fonte",
@@ -141,4 +151,12 @@ __all__ = [
     "NICHE_PROFILES",
     "obter_perfil_nicho",
     "listar_nichos_disponiveis",
+    "DOMINIOS_PRIORITARIOS",
+    "CIDADES_EXTERIORES",
+    "dominios_oficiais_configurados",
+    "score_fonte",
+    "classificar_escopo",
+    "sinais_deterministicos",
+    "transformar",
+    "deduplicar",
 ]
