@@ -48,8 +48,17 @@ from domain.events import (
     eventos_sao_mesmo_fato,
     criar_eventos,
 )
-from domain.deltas import calcular_delta_fontes
-from domain.pricing import detectar_mudancas_preco
+from domain.deltas import (
+    calcular_delta_fontes,
+    calcular_delta_eventos,
+    ESTADO_EVENTO_NOVO,
+    ESTADO_EVENTO_RECORRENTE,
+    ESTADO_EVENTO_INATIVO_EXPIRADO,
+)
+from domain.pricing import (
+    detectar_mudancas_preco,
+    calcular_serie_temporal_precos,
+)
 from domain.scoring import (
     medir_dimensoes,
     score_ambiente_competitivo,
@@ -102,7 +111,12 @@ __all__ = [
     "eventos_sao_mesmo_fato",
     "criar_eventos",
     "calcular_delta_fontes",
+    "calcular_delta_eventos",
+    "ESTADO_EVENTO_NOVO",
+    "ESTADO_EVENTO_RECORRENTE",
+    "ESTADO_EVENTO_INATIVO_EXPIRADO",
     "detectar_mudancas_preco",
+    "calcular_serie_temporal_precos",
     "medir_dimensoes",
     "score_ambiente_competitivo",
     "score_pressao_competitiva",

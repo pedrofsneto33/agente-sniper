@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from domain.models import Fonte
 from domain.identity import sha1
-from domain.deltas import calcular_delta_fontes
-from domain.pricing import detectar_mudancas_preco
+from domain.normalizer import parse_data
+from domain.events import EVENT_CONTEXTUAL_MAX_DAYS
+from domain.deltas import calcular_delta_fontes, calcular_delta_eventos
+from domain.pricing import detectar_mudancas_preco, calcular_serie_temporal_precos
 
 
 class MemoriaSniper:
@@ -89,6 +91,15 @@ class MemoriaSniper:
         """Persiste metadados da run, fontes coletadas, eventos detectados e calcula deltas."""
         prev = self.previous_run()
         timestamp = created_at or datetime.now().isoformat(timespec="seconds")
+        ref_dt = parse_data(timestamp[:19]) if timestamp else None
+
+        # Recupera eventos históricos cobrindo o horizonte contextual (180 dias)
+        historico_eventos: List[Dict[str, Any]] = []
+        if prev:
+            since_date: Optional[str] = None
+            if ref_dt:
+                since_date = (ref_dt - timedelta(days=EVENT_CONTEXTUAL_MAX_DAYS)).strftime("%Y-%m-%d")
+            historico_eventos = self.get_event_history(since=since_date, limit_runs=None)
 
         self.conn.execute(
             "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?)",
@@ -128,12 +139,14 @@ class MemoriaSniper:
                 for r in self.conn.execute("SELECT fingerprint, content_hash FROM sources WHERE run_id=?", (prev,))
             }
 
-        delta = calcular_delta_fontes(fontes, old_hashes)
+        delta_fontes = calcular_delta_fontes(fontes, old_hashes)
+        eventos_delta = calcular_delta_eventos(events, historico_eventos, hoje=ref_dt)
 
         return {
             "previous_run": prev,
-            "novas_fontes": delta["novas_fontes"],
-            "fontes_alteradas": delta["fontes_alteradas"]
+            "novas_fontes": delta_fontes["novas_fontes"],
+            "fontes_alteradas": delta_fontes["fontes_alteradas"],
+            "eventos_delta": eventos_delta,
         }
 
     def save_price_snapshots(
@@ -204,12 +217,126 @@ class MemoriaSniper:
                     d["evidence_ids"] = json.loads(d["evidence_ids"])
                 except Exception:
                     pass
+            if "created_at" in d and "date" not in d and d["created_at"]:
+                d["date"] = d["created_at"][:10]
+            if "event_key" in d and "event_id" not in d:
+                d["event_id"] = d["event_key"]
+            out.append(d)
+        return out
+
+    def get_event_history(
+        self,
+        limit_runs: Optional[int] = None,
+        since: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Recupera eventos persistidos em múltiplas execuções com ordenação determinística.
+
+        :param limit_runs: Quantidade de execuções anteriores a considerar (None ou <=0 para todas).
+        :param since: Filtro opcional de data mínima ISO (ex: "2026-08-01").
+        :return: Lista de dicionários de eventos com evidence_ids deserializados.
+        """
+        query_runs = "SELECT run_id FROM runs"
+        params_runs: List[Any] = []
+        if since:
+            query_runs += " WHERE created_at >= ?"
+            params_runs.append(since)
+        query_runs += " ORDER BY created_at DESC"
+        if limit_runs is not None and limit_runs > 0:
+            query_runs += " LIMIT ?"
+            params_runs.append(limit_runs)
+
+        target_runs = [r[0] for r in self.conn.execute(query_runs, params_runs).fetchall()]
+        if not target_runs:
+            return []
+
+        placeholders = ",".join("?" for _ in target_runs)
+        sql = f"""
+            SELECT * FROM events
+            WHERE run_id IN ({placeholders})
+            ORDER BY created_at ASC, event_key ASC, run_id ASC
+        """
+        out: List[Dict[str, Any]] = []
+        for r in self.conn.execute(sql, target_runs):
+            d = dict(r)
+            if "evidence_ids" in d and isinstance(d["evidence_ids"], str):
+                try:
+                    d["evidence_ids"] = json.loads(d["evidence_ids"])
+                except Exception:
+                    pass
+            if "created_at" in d and "date" not in d and d["created_at"]:
+                d["date"] = d["created_at"][:10]
+            if "event_key" in d and "event_id" not in d:
+                d["event_id"] = d["event_key"]
             out.append(d)
         return out
 
     def get_price_snapshots(self, run_id: str) -> List[Dict[str, Any]]:
         """Recupera todos os snapshots de preço para uma execução."""
         return [dict(r) for r in self.conn.execute("SELECT * FROM price_snapshots WHERE run_id=?", (run_id,))]
+
+    def get_all_price_snapshots(
+        self,
+        limit_runs: Optional[int] = None,
+        since: Optional[str] = None,
+        entity: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Recupera snapshots de preço consolidados de múltiplas runs em ordem cronológica determinística.
+
+        :param limit_runs: Quantidade de execuções anteriores a considerar (None ou <=0 para todas).
+        :param since: Filtro opcional de data mínima ISO de captura (price_snapshots.captured_at >= since).
+        :param entity: Filtro opcional por nome da entidade.
+        :return: Lista de dicionários de snapshots ordenados por captured_at ASC e desempate por run_id ASC.
+        """
+        conditions: List[str] = []
+        params_snaps: List[Any] = []
+
+        if limit_runs is not None and limit_runs > 0:
+            query_runs = "SELECT run_id FROM runs ORDER BY created_at DESC LIMIT ?"
+            target_runs = [r[0] for r in self.conn.execute(query_runs, (limit_runs,)).fetchall()]
+            if not target_runs:
+                return []
+            placeholders = ",".join("?" for _ in target_runs)
+            conditions.append(f"run_id IN ({placeholders})")
+            params_snaps.extend(target_runs)
+
+        if since:
+            conditions.append("captured_at >= ?")
+            params_snaps.append(since)
+
+        if entity:
+            conditions.append("entity = ?")
+            params_snaps.append(entity)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            SELECT * FROM price_snapshots
+            {where_clause}
+            ORDER BY captured_at ASC, entity ASC, source_domain ASC, product_key ASC, run_id ASC
+        """
+        return [dict(r) for r in self.conn.execute(sql, params_snaps)]
+
+    def get_price_series(
+        self,
+        entity: Optional[str] = None,
+        limit_runs: Optional[int] = None,
+        since: Optional[str] = None,
+        janelas_dias: Sequence[int] = (7, 15, 30),
+        hoje: Optional[datetime] = None
+    ) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+        """
+        Recupera snapshots históricos e calcula séries temporais delegando ao domínio puro.
+
+        :param entity: Filtro opcional por entidade.
+        :param limit_runs: Limite opcional de execuções históricas.
+        :param since: Filtro opcional de data inicial.
+        :param janelas_dias: Janelas em dias para cálculo de variações temporais.
+        :param hoje: Ponto temporal de referência opcional.
+        :return: Mapeamento {(entity, source_domain, product_key): resumo_serie}.
+        """
+        snaps = self.get_all_price_snapshots(limit_runs=limit_runs, since=since, entity=entity)
+        return calcular_serie_temporal_precos(snaps, janelas_dias=janelas_dias, hoje=hoje)
 
     def close(self) -> None:
         """Encerra a conexão com o banco SQLite."""

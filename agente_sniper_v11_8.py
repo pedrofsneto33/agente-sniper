@@ -2006,6 +2006,18 @@ def _playwright_session_search(base_url: str, search_url_template: str, queries:
 def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None, raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> Dict[str, Any]:
     if not MONITORAR_PRECOS:
         return {"enabled": False, "reason": "monitoramento desativado"}
+    series_temporais = {}
+    if memoria:
+        try:
+            raw_series = memoria.get_price_series(hoje=HOJE)
+            for (ent, s_dom, p_key), s_data in raw_series.items():
+                d = dict(s_data)
+                d["entity"] = ent
+                d["source_domain"] = s_dom
+                d["product_key"] = p_key
+                series_temporais[f"{ent}::{s_dom}::{p_key}"] = d
+        except Exception as e:
+            logger.warning("[PRICE SERIES] Falha ao recuperar séries de preços: %s", str(e)[:100])
     sources=mesclar_price_sources(fontes, raw_results=raw_results, tavily_client=tavily_client)
     logger.info("[PREÇOS] fontes candidatas=%d | budget_fetches=%d", len(sources), PRICE_MAX_HTTP_FETCHES)
     for _src in sources[:12]:
@@ -2014,9 +2026,9 @@ def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None
     competitors=[x for x in sources if x.get("role")=="competitor"]
     if not targets:
         logger.warning("[PREÇOS] nenhuma fonte comercial do alvo foi descoberta. Configure PRECO_ALVO_URLS/PRICE_SOURCES_JSON ou verifique buscas comerciais.")
-        return {"enabled":True,"status":"sem_fonte_de_preco_do_alvo","comparacoes":[],"fontes_descobertas":sources}
+        return {"enabled":True,"status":"sem_fonte_de_preco_do_alvo","comparacoes":[],"fontes_descobertas":sources,"series_temporais":series_temporais}
     if not competitors:
-        return {"enabled":True,"status":"sem_fontes_de_concorrentes","comparacoes":[],"fontes_descobertas":sources}
+        return {"enabled":True,"status":"sem_fontes_de_concorrentes","comparacoes":[],"fontes_descobertas":sources,"series_temporais":series_temporais}
     item_cache: Dict[str,List[PriceItem]] = {}
     def cached_items(src: Dict[str, Any]) -> List[PriceItem]:
         key=f"{src.get('role','')}|{src.get('name','')}|{src.get('domain','')}|{src.get('url','')}"
@@ -2044,7 +2056,7 @@ def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None
     target_items=[x for x in uniq.values() if getattr(x,"price_confidence",0.0)>=0.70]
     target_items=list(target_items)[:MAX_PRECO_ITENS]
     if not target_items:
-        return {"enabled":True,"status":"sem_produtos_alvo","comparacoes":[],"produtos_alvo":0,"fontes_descobertas":sources}
+        return {"enabled":True,"status":"sem_produtos_alvo","comparacoes":[],"produtos_alvo":0,"fontes_descobertas":sources,"series_temporais":series_temporais}
     comparacoes=[]
     for comp in competitors:
         catalog=cached_items(comp)
@@ -2098,7 +2110,7 @@ def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None
         ds=[r["dif_percent"] for r in rows]
         guerra.append({"concorrente":comp,"comparaveis":len(rows),"concorrente_mais_barato":sum(r["mais_barato"]=="concorrente" for r in rows),"alvo_mais_barato":sum(r["mais_barato"]=="alvo" for r in rows),"empates":sum(r["mais_barato"]=="igual" for r in rows),"dif_media_percent":round(sum(ds)/len(ds),2),"dif_mediana_percent":round(sorted(ds)[len(ds)//2],2),"maior_gap_percent":round(max(ds,key=lambda z:abs(z)),2)})
     guerra.sort(key=lambda x:(x["concorrente_mais_barato"],abs(x["dif_media_percent"])),reverse=True)
-    return {"enabled":True,"status":"ok" if comparable else "sem_matches_confiaveis","produtos_alvo":len(target_items),"comparacoes":comparacoes,"comparaveis":len(comparable),"alvo_mais_barato":sum(x["mais_barato"]=="alvo" for x in comparable),"concorrente_mais_barato":sum(x["mais_barato"]=="concorrente" for x in comparable),"promocoes_alvo":sum(bool(x.get("alvo_promocao")) for x in comparacoes),"promocoes_concorrentes":sum(bool(x.get("concorrente_promocao")) for x in comparacoes),"maiores_gaps":sorted(comparable,key=lambda x:abs(x.get("dif_percent",0)),reverse=True)[:15],"fontes":sources,"guerra_de_precos":guerra,"historico":history,"snapshots_observados":len(snapshots),"metodologia":"descoberta automática de domínios comerciais + expansão de homepage/sitemap/links comerciais; catálogo direto e pesquisa por produto quando disponível; matching por nome/marca/unidade; somente matches acima do limiar entram na comparação; snapshots persistidos em SQLite para histórico de guerra de preços."}
+    return {"enabled":True,"status":"ok" if comparable else "sem_matches_confiaveis","produtos_alvo":len(target_items),"comparacoes":comparacoes,"comparaveis":len(comparable),"alvo_mais_barato":sum(x["mais_barato"]=="alvo" for x in comparable),"concorrente_mais_barato":sum(x["mais_barato"]=="concorrente" for x in comparable),"promocoes_alvo":sum(bool(x.get("alvo_promocao")) for x in comparacoes),"promocoes_concorrentes":sum(bool(x.get("concorrente_promocao")) for x in comparacoes),"maiores_gaps":sorted(comparable,key=lambda x:abs(x.get("dif_percent",0)),reverse=True)[:15],"fontes":sources,"guerra_de_precos":guerra,"historico":history,"series_temporais":series_temporais,"snapshots_observados":len(snapshots),"metodologia":"descoberta automática de domínios comerciais + expansão de homepage/sitemap/links comerciais; catálogo direto e pesquisa por produto quando disponível; matching por nome/marca/unidade; somente matches acima do limiar entram na comparação; snapshots persistidos em SQLite para histórico de guerra de preços."}
 
 
 # ============================================================
@@ -2517,6 +2529,15 @@ def gerar_html(pacote: Dict[str, Any], fontes: List[Fonte], events: List[Dict[st
     concorrencia = pacote.get("concorrencia", [])[:8]
     score = ambiente["score"]
     cor_score = "bad" if score >= 70 else "warn" if score >= 45 else "good"
+
+    delta_evt = memoria.get("eventos_delta", {}) if isinstance(memoria, dict) else {}
+    n_novos = len(delta_evt.get("novos", []))
+    n_rec = len(delta_evt.get("recorrentes", []))
+    if n_novos or n_rec:
+        resumo_eventos = f"{len(fontes)} evidências · {n_novos} novos · {n_rec} recorrentes"
+    else:
+        resumo_eventos = f"{len(fontes)} evidências auditáveis · {memoria.get('novas_fontes',0)} novas"
+
     html = f"""<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Agente Sniper — {html_escape(EMPRESA_ALVO)}</title>
 <style>
@@ -2535,7 +2556,7 @@ table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(
 <div class='card'><div class='label'>Pressão competitiva</div><div class='metric'>{('—' if ambiente.get('pressao_competitiva',{}).get('score') is None else str(ambiente['pressao_competitiva']['score'])+'/100')}</div><div>{html_escape(ambiente.get('pressao_competitiva',{}).get('label','NÃO CALCULADO'))}</div></div>
 <div class='card'><div class='label'>Vulnerabilidade</div><div class='metric'>{ambiente.get('vulnerabilidade_empresa',{}).get('score',0)}/100</div><div>{html_escape(ambiente.get('vulnerabilidade_empresa',{}).get('label','BAIXA'))}</div></div>
 <div class='card'><div class='label'>Momentum do mercado</div><div class='metric'>{ambiente.get('momentum_mercado',0)}/100</div><div>movimentos recentes datados</div></div>
-<div class='card'><div class='label'>Eventos canônicos</div><div class='metric'>{len(events)}</div><div>{len(fontes)} evidências auditáveis · {memoria.get('novas_fontes',0)} novas</div></div></div>
+<div class='card'><div class='label'>Eventos canônicos</div><div class='metric'>{len(events)}</div><div>{resumo_eventos}</div></div></div>
 <div class='section'><h2>Decisão em 15 minutos</h2><div class='grid2'><div class='card lead'>{''.join('<p>'+html_escape(x)+'</p>' for x in resumo)}</div>
 <div class='score'><div class='label'>Cobertura do radar</div><div class='metric'>{int(ambiente.get('cobertura',0)*100)}%</div><div class='muted'>quanto das dimensões tem evidência suficiente para influenciar o índice</div><div class='scorebar'><div class='scorefill fill{cor_score}' style='width:{int(ambiente.get('cobertura',0)*100)}%'></div></div></div></div></div>
 <div class='section'><h2>Onde está a pressão</h2><div class='card lead'><b>Leitura dos índices:</b> pressão competitiva mede movimentos externos; vulnerabilidade mede sinais de risco da empresa monitorada; momentum mede velocidade de movimentos recentes. Eles não são equivalentes.</div><div class='grid2'>"""
@@ -2563,6 +2584,19 @@ table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(
         for ch in cp.get("historico", {}).get("mudancas", [])[:12]:
             sinal="subiu" if float(ch.get("change_pct") or 0)>0 else "caiu"
             html += f"<div class='source'><b>{html_escape(ch.get('entity'))}</b> — {html_escape(ch.get('product_name'))}: {sinal} {abs(float(ch.get('change_pct') or 0)):.1f}% · R$ {float(ch.get('previous_price') or 0):.2f} → R$ {float(ch.get('current_price') or 0):.2f}</div>"
+        series_hist = cp.get("series_temporais", {})
+        if series_hist:
+            html += "<h4>Séries Temporais e Tendências de Preços</h4>"
+            html += "<table><thead><tr><th>Produto</th><th>Entidade</th><th>Atual</th><th>Δ7d</th><th>Δ15d</th><th>Δ30d</th><th>Volatilidade</th><th>Tendência</th></tr></thead><tbody>"
+            for k_s, s in list(series_hist.items())[:12]:
+                d7 = f"{s['deltas_janela'][7]:+.1f}%" if s.get('deltas_janela',{}).get(7) is not None else "—"
+                d15 = f"{s['deltas_janela'][15]:+.1f}%" if s.get('deltas_janela',{}).get(15) is not None else "—"
+                d30 = f"{s['deltas_janela'][30]:+.1f}%" if s.get('deltas_janela',{}).get(30) is not None else "—"
+                tend = s.get('tendencia', 'INSUFICIENTE')
+                cor_tend = "var(--green)" if tend=="QUEDA" else "var(--red)" if tend=="ALTA" else "var(--ink)"
+                p_nome = html_escape(s.get('product_name') or s.get('product_key') or k_s)
+                html += f"<tr><td><b>{p_nome}</b></td><td>{html_escape(s.get('entity',''))}</td><td>R$ {s.get('preco_atual',0.0):.2f}</td><td>{d7}</td><td>{d15}</td><td>{d30}</td><td>{s.get('volatilidade',0.0):.2f}</td><td style='color:{cor_tend};font-weight:700'>{tend}</td></tr>"
+            html += "</tbody></table>"
         html += "</div>"
     html += "<div class='section'><h2>Sinais que merecem decisão</h2>"
     for s in sinais:
@@ -2583,7 +2617,9 @@ table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(
     html += "</div></div><div class='section'><h2>Lacunas de informação</h2><div class='card'>" + ''.join(f"<p>• {html_escape(x)}</p>" for x in pacote.get('lacunas',[])) + "</div></div>"
     html += "<div class='section'><h2>Eventos mais relevantes</h2>"
     for e in events[:15]:
-        html += f"<div class='source'><b>{html_escape(e['kind'])}</b> — {html_escape(e['title'])}<div class='muted'>{e['importance']}/100 · confiança {int(float(e.get('confidence',0))*100)}% · {e.get('independent_source_count',1)} fonte(s) independente(s) · {html_escape(e.get('date') or 'data não identificada')} · {html_escape(ref_text(e.get('evidence_ids',[])))}</div></div>"
+        est = e.get("estado_temporal")
+        badge = f"<span class='pill'>{html_escape(est)}</span> " if est else ""
+        html += f"<div class='source'>{badge}<b>{html_escape(e['kind'])}</b> — {html_escape(e['title'])}<div class='muted'>{e['importance']}/100 · confiança {int(float(e.get('confidence',0))*100)}% · {e.get('independent_source_count',1)} fonte(s) independente(s) · {html_escape(e.get('date') or 'data não identificada')} · {html_escape(ref_text(e.get('evidence_ids',[])))}</div></div>"
     html += "</div><div class='section'><h2>Evidências auditáveis</h2><table><thead><tr><th>ID</th><th>Escopo</th><th>Data</th><th>Fonte</th><th>Título</th><th>Score</th></tr></thead><tbody>"
     for f in fontes[:80]:
         html += f"<tr><td>{f.id}</td><td>{html_escape(f.escopo)}</td><td>{html_escape(f.data_publicacao or 'não identificada')}</td><td>{html_escape(f.dominio)}</td><td>{html_escape(f.titulo)}</td><td>{f.score:.1f}</td></tr>"
