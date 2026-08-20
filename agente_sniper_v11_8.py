@@ -132,6 +132,10 @@ from domain.decision import (
     validar_ids_sinais,
     validar_pacote,
 )
+from domain.profiles import (
+    NICHE_PROFILES,
+    obter_perfil_nicho,
+)
 from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
 
 # ---------- dependências opcionais ----------
@@ -405,134 +409,10 @@ USER_AGENT = (
 )
 
 # ============================================================
-# 2. PERFIS DE NICHO
+# 2. PERFIS DE NICHO (DOMAIN BINDINGS)
 # ============================================================
 
-NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
-    "supermercado": {
-        "label": "Varejo alimentar",
-        "queries": [
-            "preço oferta promoção cesta concorrente",
-            "reclamação atendimento fila produto entrega",
-            "inauguração loja expansão app delivery fidelidade",
-            "Procon fiscalização vigilância sanitária",
-            "emprego contratação nova unidade",
-        ],
-        "signals": ["preço", "oferta", "promoção", "fila", "produto", "entrega", "loja", "app", "delivery", "inauguração"],
-    },
-    "restaurante": {
-        "label": "Alimentação e hospitalidade",
-        "queries": [
-            "preço cardápio promoção delivery concorrente",
-            "avaliação reclamação atendimento qualidade",
-            "nova unidade expansão franquia",
-            "iFood delivery aplicativo marketing",
-            "fiscalização vigilância sanitária",
-        ],
-        "signals": ["cardápio", "preço", "delivery", "avaliação", "atendimento", "franquia", "unidade"],
-    },
-    "clinica": {
-        "label": "Saúde e serviços clínicos",
-        "queries": [
-            "serviços especialidades preço convênio",
-            "avaliação reclamação atendimento",
-            "nova unidade médicos contratação",
-            "marketing tecnologia agendamento aplicativo",
-            "licença fiscalização regulação",
-        ],
-        "signals": ["especialidade", "convênio", "consulta", "avaliação", "atendimento", "agendamento", "unidade"],
-    },
-    "hotel": {
-        "label": "Hotelaria",
-        "queries": [
-            "diária preço promoção concorrente",
-            "avaliação reclamação atendimento",
-            "ocupação expansão nova unidade",
-            "booking hoteis.com turismo eventos",
-            "serviços experiência hóspede",
-        ],
-        "signals": ["diária", "hotel", "reserva", "ocupação", "avaliação", "hóspede", "serviço"],
-    },
-    "farmacia": {
-        "label": "Varejo farmacêutico",
-        "queries": [
-            "preço promoção medicamento concorrente",
-            "avaliação atendimento entrega",
-            "nova loja expansão",
-            "app delivery fidelidade",
-            "Anvisa Procon fiscalização",
-        ],
-        "signals": ["preço", "promoção", "medicamento", "delivery", "farmácia", "loja", "Anvisa"],
-    },
-    "imobiliaria": {
-        "label": "Mercado imobiliário",
-        "queries": [
-            "lançamento preço imóvel concorrente",
-            "avaliação atendimento corretores",
-            "novos empreendimentos expansão",
-            "marketing leads digital",
-            "mercado vendas aluguel",
-        ],
-        "signals": ["imóvel", "lançamento", "preço", "aluguel", "vendas", "leads", "empreendimento"],
-    },
-    "tecnologia": {
-        "label": "Tecnologia e SaaS",
-        "queries": [
-            "produto lançamento preço concorrente",
-            "avaliação cliente churn reclamação",
-            "parceria investimento aquisição",
-            "feature roadmap tecnologia",
-            "contratação engenharia vendas",
-        ],
-        "signals": ["produto", "SaaS", "preço", "feature", "API", "parceria", "investimento"],
-    },
-    "educacao": {
-        "label": "Educação",
-        "queries": [
-            "curso preço matrícula promoção concorrente",
-            "avaliação aluno atendimento",
-            "nova unidade expansão",
-            "plataforma aplicativo tecnologia",
-            "vagas contratação professores",
-        ],
-        "signals": ["curso", "mensalidade", "matrícula", "aluno", "professor", "plataforma", "unidade"],
-    },
-    "varejo": {
-        "label": "Varejo geral",
-        "queries": [
-            "preço promoção produto concorrente",
-            "avaliação atendimento entrega",
-            "nova loja expansão",
-            "e-commerce aplicativo fidelidade",
-            "campanha marketing lançamento",
-        ],
-        "signals": ["preço", "promoção", "produto", "loja", "e-commerce", "app", "campanha"],
-    },
-    "servicos": {
-        "label": "Serviços",
-        "queries": [
-            "preço serviço concorrente",
-            "avaliação reclamação atendimento",
-            "expansão nova unidade contratação",
-            "digital aplicativo agendamento",
-            "marketing parceria campanha",
-        ],
-        "signals": ["preço", "serviço", "avaliação", "atendimento", "agendamento", "parceria"],
-    },
-    "generico": {
-        "label": "Empresa genérica",
-        "queries": [
-            "preço produto serviço concorrente",
-            "avaliação reclamação atendimento",
-            "expansão nova unidade contratação",
-            "produto tecnologia marketing",
-            "regulação fiscalização parceria",
-        ],
-        "signals": ["preço", "produto", "serviço", "avaliação", "expansão", "tecnologia", "marketing"],
-    },
-}
-
-PROFILE = NICHE_PROFILES.get(NICHO, NICHE_PROFILES["generico"])
+PROFILE = obter_perfil_nicho(NICHO)
 
 # ============================================================
 # 3. HELPERS & ADAPTERS (DOMAIN BINDINGS)

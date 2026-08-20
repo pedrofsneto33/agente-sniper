@@ -74,6 +74,11 @@ from domain.decision import (
     validar_ids_sinais,
     validar_pacote,
 )
+from domain.profiles import (
+    NICHE_PROFILES,
+    obter_perfil_nicho,
+    listar_nichos_disponiveis,
+)
 
 __all__ = [
     "Fonte",
@@ -133,4 +138,7 @@ __all__ = [
     "inteligencia_deterministica",
     "validar_ids_sinais",
     "validar_pacote",
+    "NICHE_PROFILES",
+    "obter_perfil_nicho",
+    "listar_nichos_disponiveis",
 ]
