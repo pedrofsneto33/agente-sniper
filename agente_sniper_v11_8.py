@@ -158,20 +158,20 @@ from llm import (
     CACHE_TTL,
 )
 from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
+from search import (
+    TavilyBudgetGuard,
+    buscar_ddg,
+    buscar_news_rss as _search_buscar_news_rss,
+    buscar_tavily as _search_buscar_tavily,
+    coletar_tudo as _search_coletar_tudo,
+    gerar_consultas as _search_gerar_consultas,
+)
 
 # ---------- dependências opcionais ----------
 try:
     from tavily import TavilyClient
 except Exception:
     TavilyClient = None
-
-try:
-    from ddgs import DDGS
-except Exception:
-    try:
-        from duckduckgo_search import DDGS
-    except Exception:
-        DDGS = None
 
 try:
     from dateutil import parser as date_parser
@@ -753,94 +753,13 @@ class PersistentPlaywrightManager:
 _PLAYWRIGHT_MGR = PersistentPlaywrightManager()
 
 # ============================================================
-# FASE 19: TAVILY BUDGET GUARD & CIRCUIT BREAKER
+# FASE 19: TAVILY BUDGET GUARD & CIRCUIT BREAKER (SEARCH BINDINGS)
 # ============================================================
 
 MAX_TAVILY_QUERIES_PER_RUN = min(int(os.getenv("MAX_TAVILY_QUERIES_PER_RUN", "5")), 5)
 _TAVILY_CACHE_TTL = 86400.0  # 24h
 
-class TavilyBudgetGuard:
-    """Gerencia o orçamento rígido, cache em memória/TTL e Circuit Breaker do Tavily."""
-
-    def __init__(self, max_queries: int = MAX_TAVILY_QUERIES_PER_RUN):
-        self.max_queries = max_queries
-        self._lock = threading.Lock()
-        self.circuit_open = False
-        self.circuit_reason = ""
-        self._cache: Dict[str, Tuple[List[Dict[str, Any]], float]] = {}
-
-        # Telemetria
-        self.queries_attempted = 0
-        self.queries_executed = 0
-        self.queries_blocked_budget = 0
-        self.cache_hits = 0
-        self.failures = 0
-
-    @property
-    def estimated_credits_used(self) -> int:
-        return self.queries_executed
-
-    def search(self, client: Any, query: str, categoria: str) -> List[Dict[str, Any]]:
-        """Executa busca no Tavily com controle atômico de orçamento, cache e circuit breaker."""
-        if not client or not USAR_TAVILY:
-            return []
-
-        q_key = query.strip().lower()
-
-        with self._lock:
-            self.queries_attempted += 1
-
-            # 1. Circuit Breaker
-            if self.circuit_open:
-                return []
-
-            # 2. Cache por TTL (24h)
-            if q_key in self._cache:
-                results, ts = self._cache[q_key]
-                if time.time() - ts < _TAVILY_CACHE_TTL:
-                    self.cache_hits += 1
-                    return results
-
-            # 3. Budget Guard (Máximo de consultas por RUN)
-            if self.queries_executed >= self.max_queries:
-                self.queries_blocked_budget += 1
-                logger.info("[TAVILY BUDGET] Limite de %d consultas atingido. Query pulada: %s", self.max_queries, query[:60])
-                return []
-
-            # Reserva o slot de execução
-            self.queries_executed += 1
-
-        # Execução fora do lock
-        try:
-            r = client.search(query=query, max_results=5, search_depth="basic", include_answer=False)
-            res = [
-                {
-                    "titulo": x.get("title", ""),
-                    "url": x.get("url", ""),
-                    "conteudo": x.get("content", ""),
-                    "origem": "Tavily",
-                    "data_publicacao": x.get("published_date", "") or "",
-                    "categoria": categoria,
-                }
-                for x in r.get("results", [])
-            ]
-            with self._lock:
-                self._cache[q_key] = (res, time.time())
-            return res
-        except Exception as e:
-            err_msg = str(e)
-            with self._lock:
-                self.failures += 1
-                err_lower = err_msg.lower()
-                if any(k in err_lower for k in ["429", "quota", "rate limit", "credits", "unauthorized", "401", "forbidden", "403"]):
-                    self.circuit_open = True
-                    self.circuit_reason = err_msg[:120]
-                    logger.warning("[TAVILY CIRCUIT BREAKER ABERTO] %s. Tavily desativado para esta run.", self.circuit_reason)
-                else:
-                    logger.warning("[TAVILY] %s", err_msg[:160])
-            return []
-
-_TAVILY_GUARD = TavilyBudgetGuard()
+_TAVILY_GUARD = TavilyBudgetGuard(max_queries=MAX_TAVILY_QUERIES_PER_RUN)
 
 def _fetch_html_http(url: str, timeout: Optional[float] = None) -> Tuple[str, str]:
     t0 = time.perf_counter()
@@ -1133,161 +1052,59 @@ def mesclar_price_sources(fontes: List[Fonte], raw_results: Optional[List[Dict[s
     return merged
 
 # ============================================================
-# 5. BUSCAS
+# 5. BUSCAS (SEARCH BINDINGS)
 # ============================================================
 
-def gerar_consultas() -> Dict[str, List[Tuple[str, str]]]:
-    emp = f'"{EMPRESA_ALVO}"'
-    local = f'"{CIDADE}"' if CIDADE else ""
-    empresa = []
-    for q in PROFILE["queries"]:
-        empresa.append((f"{emp} {local} {q} {HOJE.year}".strip(), EMPRESA_ALVO))
-    empresa.extend([
-        (f"{emp} {local} notícias {HOJE.year}".strip(), EMPRESA_ALVO),
-        (f"{emp} {local} expansão concorrentes mercado {HOJE.year}".strip(), EMPRESA_ALVO),
-    ])
-    mercado = [
-        (f"{NICHO} {local} mercado tendências preço comportamento {HOJE.year}".strip(), "mercado"),
-        (f"{NICHO} Brasil tendências {HOJE.year}".strip(), "mercado"),
-    ]
-    concorrencia = []
-    comercial = [
-        (f'{emp} {local} comprar online loja virtual catalogo produtos preços ofertas {HOJE.year}'.strip(), EMPRESA_ALVO),
-        (f'{emp} {local} site oficial supershop loja compras {HOJE.year}'.strip(), EMPRESA_ALVO),
-    ]
-    for nome in CONCORRENTES:
-        concorrencia.extend([
-            (f'"{nome}" {local} preço promoção expansão notícias {HOJE.year}'.strip(), nome),
-            (f'"{nome}" {local} reclamação atendimento avaliação {HOJE.year}'.strip(), nome),
-            (f'"{nome}" {local} aplicativo delivery marketing {HOJE.year}'.strip(), nome),
-        ])
-        comercial.extend([
-            (f'"{nome}" {local} comprar online loja virtual catalogo produtos preços ofertas {HOJE.year}'.strip(), nome),
-            (f'"{nome}" {local} site oficial loja compras catálogo {HOJE.year}'.strip(), nome),
-        ])
-    return {"empresa": empresa, "concorrencia": concorrencia, "comercial": comercial, "mercado": mercado}
+def gerar_consultas(**kwargs: Any) -> Dict[str, List[Tuple[str, str]]]:
+    kwargs.setdefault("empresa_alvo", EMPRESA_ALVO)
+    kwargs.setdefault("cidade", CIDADE)
+    kwargs.setdefault("estado", ESTADO)
+    kwargs.setdefault("nicho", NICHO)
+    kwargs.setdefault("concorrentes", CONCORRENTES)
+    kwargs.setdefault("queries_nicho", PROFILE.get("queries") if isinstance(PROFILE, dict) else None)
+    kwargs.setdefault("ano", HOJE.year)
+    return _search_gerar_consultas(**kwargs)
 
 
 def buscar_tavily(client: Any, query: str, categoria: str) -> List[Dict[str, Any]]:
-    return _TAVILY_GUARD.search(client, query, categoria)
-
-
-def buscar_ddg(query: str, categoria: str) -> List[Dict[str, Any]]:
-    if not DDGS or not USAR_DDG:
-        return []
-    try:
-        with DDGS() as ddgs:
-            r = list(ddgs.text(query, region="br-pt", max_results=7))
-        if not r:
-            logger.info("[DDG] 0 resultados | %s", query[:100])
-            return []
-        return [
-            {
-                "titulo": x.get("title", ""),
-                "url": x.get("href", ""),
-                "conteudo": x.get("body", ""),
-                "origem": "DuckDuckGo",
-                "data_publicacao": "",
-                "categoria": categoria,
-            }
-            for x in r
-        ]
-    except Exception as e:
-        logger.warning("[DDG] %s", str(e)[:160])
-        return []
+    return _search_buscar_tavily(client, query, categoria, guard=_TAVILY_GUARD)
 
 
 def buscar_news_rss(query: str, categoria: str) -> List[Dict[str, Any]]:
-    if not USAR_NEWS_RSS:
-        return []
-    try:
-        url = "https://news.google.com/rss/search?q=" + quote_plus(query) + "&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-        session = get_http_session()
-        r = session.get(url, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "xml")
-        out = []
-        for item in soup.find_all("item")[:10]:
-            def txt(tag_name: str) -> str:
-                tag = item.find(tag_name)
-                return tag.get_text(" ", strip=True) if tag else ""
-            description_html = txt("description")
-            out.append({
-                "titulo": txt("title"),
-                "url": txt("link"),
-                "conteudo": BeautifulSoup(description_html, "html.parser").get_text(" ", strip=True),
-                "origem": "Google News RSS",
-                "data_publicacao": txt("pubDate"),
-                "categoria": categoria,
-            })
-        return out
-    except Exception as e:
-        logger.warning("[NEWS RSS] %s", str(e)[:160])
-        return []
+    return _search_buscar_news_rss(query, categoria, session=get_http_session())
 
 
 def coletar_tudo(tavily_client: Any) -> List[Dict[str, Any]]:
     consultas = gerar_consultas()
-    todas: List[Dict[str, Any]] = []
     max_por_grupo = int(os.getenv("MAX_CONSULTAS_POR_GRUPO", "5"))
-
-    flat_tasks: List[Tuple[int, str, str, str, str]] = []
-    q_id = 0
+    flat_tasks_count = 0
     for grupo, itens in consultas.items():
         itens_exec = itens[:max_por_grupo]
-        logger.info("[COLETA] %s | %d consultas", grupo, len(itens_exec))
-        for q, alvo in itens_exec:
+        for _ in itens_exec:
             if USAR_TAVILY and tavily_client:
-                flat_tasks.append((q_id, "tavily", grupo, q, alvo))
+                flat_tasks_count += 1
             if USAR_DDG:
-                flat_tasks.append((q_id, "ddg", grupo, q, alvo))
+                flat_tasks_count += 1
             if USAR_NEWS_RSS:
-                flat_tasks.append((q_id, "news_rss", grupo, q, alvo))
-            q_id += 1
+                flat_tasks_count += 1
 
-    _IO_STATS["discovery_tasks"] = len(flat_tasks)
+    _IO_STATS["discovery_tasks"] = flat_tasks_count
     t_start = time.perf_counter()
 
-    def _exec_provider_task(task: Tuple[int, str, str, str, str]) -> Tuple[int, str, List[Dict[str, Any]]]:
-        qid, prov, grupo, q, alvo = task
-        resultados = []
-        try:
-            if prov == "tavily" and tavily_client:
-                resultados = buscar_tavily(tavily_client, q, grupo)
-            elif prov == "ddg":
-                resultados = buscar_ddg(q, grupo)
-            elif prov == "news_rss":
-                resultados = buscar_news_rss(q, grupo)
-            for r in resultados:
-                r["alvo"] = alvo
-        except Exception as e:
-            logger.warning("[DISCOVERY WORKER %s] %s | %s: %s", prov.upper(), grupo, q[:60], str(e)[:120])
-        return qid, prov, resultados
-
-    results_by_qid: Dict[int, Dict[str, List[Dict[str, Any]]]] = {
-        i: {"tavily": [], "ddg": [], "news_rss": []} for i in range(q_id)
-    }
-
-    workers = min(32, max(DISCOVERY_MAX_WORKERS, 16))
-    if flat_tasks:
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sniper-discovery") as executor:
-            future_map = {executor.submit(_exec_provider_task, t): t for t in flat_tasks}
-            for future in concurrent.futures.as_completed(future_map):
-                try:
-                    qid, prov, res = future.result()
-                    results_by_qid[qid][prov] = res
-                except Exception as e:
-                    task_info = future_map[future]
-                    logger.warning("[DISCOVERY FUTURE] Tarefa %s falhou: %s", str(task_info[:2]), str(e)[:120])
-
-    # Reconstituição rigorosamente determinística na ordem canônica (query_id -> tavily -> ddg -> news_rss)
-    for i in range(q_id):
-        todas.extend(results_by_qid[i]["tavily"])
-        todas.extend(results_by_qid[i]["ddg"])
-        todas.extend(results_by_qid[i]["news_rss"])
+    todas = _search_coletar_tudo(
+        tavily_client=tavily_client,
+        consultas=consultas,
+        max_consultas_por_grupo=max_por_grupo,
+        usar_tavily=USAR_TAVILY,
+        usar_ddg=USAR_DDG,
+        usar_news_rss=USAR_NEWS_RSS,
+        max_workers=DISCOVERY_MAX_WORKERS,
+        guard=_TAVILY_GUARD,
+        session=get_http_session(),
+    )
 
     _IO_STATS["discovery_time"] = time.perf_counter() - t_start
-    logger.info("[COLETA] %d resultados brutos coletados em %.2fs (concorrência N=%d)", len(todas), _IO_STATS["discovery_time"], workers)
+    logger.info("[COLETA] %d resultados brutos coletados em %.2fs", len(todas), _IO_STATS["discovery_time"])
     return todas
 
 # ============================================================
