@@ -136,6 +136,16 @@ from domain.profiles import (
     NICHE_PROFILES,
     obter_perfil_nicho,
 )
+from reports import (
+    ref_text,
+    fonte_por_id,
+    html_escape,
+    rotulo_dimensao,
+    gerar_html as _reports_gerar_html,
+    gerar_pdf as _reports_gerar_pdf,
+    salvar_json as _reports_salvar_json,
+    salvar_csv_fontes as _reports_salvar_csv_fontes,
+)
 from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
 
 # ---------- dependências opcionais ----------
@@ -2291,203 +2301,55 @@ EVIDÊNCIAS:
 # inteligencia_deterministica, validar_ids_sinais, validar_pacote
 
 # ============================================================
-# 13. RENDERIZAÇÃO EXECUTIVA
+# 13. RENDERIZAÇÃO EXECUTIVA (REPORTS BINDINGS)
 # ============================================================
 
-def ref_text(ids: Sequence[int]) -> str:
-    return " ".join(f"[FONTE {int(x)}]" for x in ids)
+def gerar_html(
+    pacote: Dict[str, Any],
+    fontes: List[Fonte],
+    events: List[Dict[str, Any]],
+    ambiente: Dict[str, Any],
+    memoria: Dict[str, Any],
+    **kwargs: Any,
+) -> str:
+    kwargs.setdefault("empresa_alvo", EMPRESA_ALVO)
+    kwargs.setdefault("cidade", CIDADE)
+    kwargs.setdefault("estado", ESTADO)
+    kwargs.setdefault("perfil_label", PROFILE["label"])
+    kwargs.setdefault("app_version", APP_VERSION)
+    kwargs.setdefault("data_ref", HOJE)
+    return _reports_gerar_html(pacote, fontes, events, ambiente, memoria, **kwargs)
 
 
-def fonte_por_id(fontes: List[Fonte]) -> Dict[int, Fonte]:
-    return {f.id: f for f in fontes}
+def gerar_pdf(
+    pacote: Dict[str, Any],
+    fontes: List[Fonte],
+    events: List[Dict[str, Any]],
+    ambiente: Dict[str, Any],
+    memoria: Dict[str, Any],
+    **kwargs: Any,
+) -> Optional[str]:
+    kwargs.setdefault("empresa_alvo", EMPRESA_ALVO)
+    kwargs.setdefault("cidade", CIDADE)
+    kwargs.setdefault("estado", ESTADO)
+    kwargs.setdefault("pasta_execucao", PASTA_EXECUCAO)
+    kwargs.setdefault("run_id", RUN_ID)
+    kwargs.setdefault("data_ref", HOJE)
+    return _reports_gerar_pdf(pacote, fontes, events, ambiente, memoria, **kwargs)
 
-
-def html_escape(s: Any) -> str:
-    import html
-    return html.escape(str(s or ""))
-
-
-def rotulo_dimensao(k: str) -> str:
-    return k.title().replace("Serviço", "Serviço")
-
-
-def gerar_html(pacote: Dict[str, Any], fontes: List[Fonte], events: List[Dict[str, Any]], ambiente: Dict[str, Any], memoria: Dict[str, Any]) -> str:
-    fmap = fonte_por_id(fontes)
-    sinais = pacote.get("sinais", [])[:8]
-    resumo = pacote.get("resumo_executivo", [])[:5]
-    dims = ambiente.get("dimensoes", {})
-    concorrencia = pacote.get("concorrencia", [])[:8]
-    score = ambiente["score"]
-    cor_score = "bad" if score >= 70 else "warn" if score >= 45 else "good"
-
-    delta_evt = memoria.get("eventos_delta", {}) if isinstance(memoria, dict) else {}
-    n_novos = len(delta_evt.get("novos", []))
-    n_rec = len(delta_evt.get("recorrentes", []))
-    if n_novos or n_rec:
-        resumo_eventos = f"{len(fontes)} evidências · {n_novos} novos · {n_rec} recorrentes"
-    else:
-        resumo_eventos = f"{len(fontes)} evidências auditáveis · {memoria.get('novas_fontes',0)} novas"
-
-    html = f"""<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>Agente Sniper — {html_escape(EMPRESA_ALVO)}</title>
-<style>
-:root{{--bg:#f4f6fa;--ink:#17212b;--muted:#667487;--card:#fff;--line:#e4e9ef;--navy:#0b1d33;--blue:#1e5eff;--red:#c62828;--orange:#a86200;--green:#147a45}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}} .wrap{{max-width:1240px;margin:auto;padding:24px}}
-.hero{{background:linear-gradient(135deg,#091522,#173c63);color:#fff;border-radius:24px;padding:32px;box-shadow:0 16px 40px rgba(5,20,40,.18)}} .kicker{{font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.74}} h1{{font-size:38px;margin:10px 0 4px}} .sub{{opacity:.86}}
-.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}} .card{{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 6px 20px rgba(24,33,43,.05)}} .metric{{font-size:30px;font-weight:850}} .label{{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}}
-.section{{margin-top:28px}} h2{{font-size:21px;margin:0 0 12px}} .lead{{font-size:15px;line-height:1.55}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
-.score{{border-radius:18px;padding:16px;background:#fff;border:1px solid var(--line)}} .scorebar{{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden;margin-top:9px}} .scorefill{{height:100%}} .fillgood{{background:var(--green)}} .fillwarn{{background:#d28a10}} .fillbad{{background:var(--red)}}
-.signal{{background:#fff;border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:16px;padding:16px;margin:10px 0}} .risk{{border-left-color:var(--red)}} .opp{{border-left-color:var(--green)}} .move{{border-left-color:#c48a15}} .pill{{display:inline-block;padding:5px 8px;border-radius:999px;background:#eef2f7;font-size:10px;font-weight:800;margin-right:5px}} .muted{{color:var(--muted);font-size:12px}} .action{{font-weight:700;margin-top:8px}}
-table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}} th,td{{padding:11px;border-bottom:1px solid #edf1f4;text-align:left;font-size:12px}} th{{background:#f7f9fb;color:#506072}} .source{{margin:10px 0;padding:11px;border-bottom:1px solid #edf1f4}} .source a{{color:#1e5eff;text-decoration:none;word-break:break-all}} .footer{{margin-top:28px;color:var(--muted);font-size:11px}}
-@media(max-width:900px){{.grid{{grid-template-columns:repeat(2,1fr)}}.grid2{{grid-template-columns:1fr}}}} @media(max-width:560px){{.grid{{grid-template-columns:1fr}}.wrap{{padding:12px}}h1{{font-size:28px}}}}
-</style></head><body><div class='wrap'>
-<div class='hero'><div class='kicker'>AGENTE SNIPER · RADAR DE INTELIGÊNCIA COMPETITIVA v{APP_VERSION}</div><h1>{html_escape(EMPRESA_ALVO)}</h1><div class='sub'>{html_escape(CIDADE)}-{html_escape(ESTADO)} · {html_escape(PROFILE['label'])} · {HOJE.strftime('%d/%m/%Y %H:%M')}</div></div>
-<div class='grid'>
-<div class='card'><div class='label'>Pressão competitiva</div><div class='metric'>{('—' if ambiente.get('pressao_competitiva',{}).get('score') is None else str(ambiente['pressao_competitiva']['score'])+'/100')}</div><div>{html_escape(ambiente.get('pressao_competitiva',{}).get('label','NÃO CALCULADO'))}</div></div>
-<div class='card'><div class='label'>Vulnerabilidade</div><div class='metric'>{ambiente.get('vulnerabilidade_empresa',{}).get('score',0)}/100</div><div>{html_escape(ambiente.get('vulnerabilidade_empresa',{}).get('label','BAIXA'))}</div></div>
-<div class='card'><div class='label'>Momentum do mercado</div><div class='metric'>{ambiente.get('momentum_mercado',0)}/100</div><div>movimentos recentes datados</div></div>
-<div class='card'><div class='label'>Eventos canônicos</div><div class='metric'>{len(events)}</div><div>{resumo_eventos}</div></div></div>
-<div class='section'><h2>Decisão em 15 minutos</h2><div class='grid2'><div class='card lead'>{''.join('<p>'+html_escape(x)+'</p>' for x in resumo)}</div>
-<div class='score'><div class='label'>Cobertura do radar</div><div class='metric'>{int(ambiente.get('cobertura',0)*100)}%</div><div class='muted'>quanto das dimensões tem evidência suficiente para influenciar o índice</div><div class='scorebar'><div class='scorefill fill{cor_score}' style='width:{int(ambiente.get('cobertura',0)*100)}%'></div></div></div></div></div>
-<div class='section'><h2>Onde está a pressão</h2><div class='card lead'><b>Leitura dos índices:</b> pressão competitiva mede movimentos externos; vulnerabilidade mede sinais de risco da empresa monitorada; momentum mede velocidade de movimentos recentes. Eles não são equivalentes.</div><div class='grid2'>"""
-    for k, d in sorted(dims.items(), key=lambda kv: kv[1].get("score",0), reverse=True):
-        s=d.get("score",0); cl="bad" if s>=70 else "warn" if s>=45 else "good"
-        html += f"<div class='score'><div class='label'>{html_escape(rotulo_dimensao(k))}</div><div class='metric'>{s}/100</div><div class='muted'>{d.get('eventos',0)} eventos · {d.get('evidencias',0)} evidências · {d.get('eventos_correlacionados',0)} corroborados</div><div class='scorebar'><div class='scorefill fill{cl}' style='width:{s}%'></div></div></div>"
-    html += "</div></div>"
-    cp = pacote.get("comparacao_precos", {})
-    if cp.get("enabled"):
-        html += "<div class='section'><h2>Comparador de preços e promoções</h2>"
-        html += "<div class='card lead'><b>Status:</b> " + html_escape(str(cp.get("status", ""))) + " · <b>Produtos-base:</b> " + str(cp.get("produtos_alvo", 0)) + " · <b>Comparáveis:</b> " + str(cp.get("comparaveis", 0)) + "</div>"
-        html += "<div class='grid2'>"
-        for x in cp.get("maiores_gaps", [])[:6]:
-            dp = x.get("dif_percent")
-            sinal = "concorrente mais barato" if dp is not None and dp < 0 else "alvo mais barato" if dp is not None and dp > 0 else "sem diferença"
-            html += f"<div class='score'><div class='label'>{html_escape(x.get('produto_alvo',''))}</div><div class='metric'>{'—' if dp is None else f'{dp:+.1f}%'} </div><div>{html_escape(sinal)}</div><div class='muted'>{html_escape(x.get('concorrente',''))} · match {int(float(x.get('similaridade',0))*100)}% · {html_escape(x.get('location_note',''))}</div></div>"
-        html += "</div><div class='card lead'><b>Promoções:</b> alvo " + str(cp.get("promocoes_alvo", 0)) + " · concorrentes " + str(cp.get("promocoes_concorrentes", 0)) + "</div></div>"
-        html += "<div class='section'><h3>Guerra de preços — histórico</h3>"
-        html += "<div class='card lead'><b>Snapshots:</b> " + str(cp.get("snapshots_observados", 0)) + " · <b>Mudanças desde a última execução:</b> " + str(len(cp.get("historico", {}).get("mudancas", []))) + "</div>"
-        if cp.get("guerra_de_precos"):
-            html += "<table><thead><tr><th>Concorrente</th><th>Comparáveis</th><th>Concorrente mais barato</th><th>Alvo mais barato</th><th>Diferença média</th></tr></thead><tbody>"
-            for g in cp.get("guerra_de_precos", [])[:10]:
-                html += f"<tr><td>{html_escape(g.get('concorrente'))}</td><td>{g.get('comparaveis',0)}</td><td>{g.get('concorrente_mais_barato',0)}</td><td>{g.get('alvo_mais_barato',0)}</td><td>{g.get('dif_media_percent',0)}%</td></tr>"
-            html += "</tbody></table>"
-        for ch in cp.get("historico", {}).get("mudancas", [])[:12]:
-            sinal="subiu" if float(ch.get("change_pct") or 0)>0 else "caiu"
-            html += f"<div class='source'><b>{html_escape(ch.get('entity'))}</b> — {html_escape(ch.get('product_name'))}: {sinal} {abs(float(ch.get('change_pct') or 0)):.1f}% · R$ {float(ch.get('previous_price') or 0):.2f} → R$ {float(ch.get('current_price') or 0):.2f}</div>"
-        series_hist = cp.get("series_temporais", {})
-        if series_hist:
-            html += "<h4>Séries Temporais e Tendências de Preços</h4>"
-            html += "<table><thead><tr><th>Produto</th><th>Entidade</th><th>Atual</th><th>Δ7d</th><th>Δ15d</th><th>Δ30d</th><th>Volatilidade</th><th>Tendência</th></tr></thead><tbody>"
-            for k_s, s in list(series_hist.items())[:12]:
-                d7 = f"{s['deltas_janela'][7]:+.1f}%" if s.get('deltas_janela',{}).get(7) is not None else "—"
-                d15 = f"{s['deltas_janela'][15]:+.1f}%" if s.get('deltas_janela',{}).get(15) is not None else "—"
-                d30 = f"{s['deltas_janela'][30]:+.1f}%" if s.get('deltas_janela',{}).get(30) is not None else "—"
-                tend = s.get('tendencia', 'INSUFICIENTE')
-                cor_tend = "var(--green)" if tend=="QUEDA" else "var(--red)" if tend=="ALTA" else "var(--ink)"
-                p_nome = html_escape(s.get('product_name') or s.get('product_key') or k_s)
-                html += f"<tr><td><b>{p_nome}</b></td><td>{html_escape(s.get('entity',''))}</td><td>R$ {s.get('preco_atual',0.0):.2f}</td><td>{d7}</td><td>{d15}</td><td>{d30}</td><td>{s.get('volatilidade',0.0):.2f}</td><td style='color:{cor_tend};font-weight:700'>{tend}</td></tr>"
-            html += "</tbody></table>"
-        html += "</div>"
-    html += "<div class='section'><h2>Sinais que merecem decisão</h2>"
-    for s in sinais:
-        typ=str(s.get('tipo','MOVIMENTO')).upper(); cls='risk' if typ=='RISCO' else 'opp' if typ=='OPORTUNIDADE' else 'move'; refs=[x for x in s.get('evidence_ids',[]) if x in fmap]
-        html += f"<div class='signal {cls}'><span class='pill'>{html_escape(typ)}</span><span class='pill'>{html_escape(s.get('impacto'))}</span><span class='pill'>{html_escape(s.get('urgencia'))}</span><h3>{html_escape(s.get('titulo'))}</h3><div class='muted'>{html_escape(s.get('limite'))} · confiança {int(float(s.get('confianca',0))*100)}%</div><p>{html_escape(s.get('racional'))}</p><p class='action'>AÇÃO: {html_escape(s.get('acao'))}</p><div class='muted'>Evidência: {html_escape(ref_text(refs))}</div></div>"
-    html += "</div>"
-    html += "<div class='section'><h2>Radar de concorrência</h2>"
-    if concorrencia:
-        html += "<table><thead><tr><th>Concorrente</th><th>Movimento</th><th>Confiança</th><th>Evidência</th></tr></thead><tbody>"
-        for c in concorrencia:
-            html += f"<tr><td>{html_escape(c.get('nome'))}</td><td>{html_escape(c.get('movimento'))}</td><td>{int(float(c.get('confianca',0))*100)}%</td><td>{html_escape(ref_text(c.get('evidence_ids',[])))}</td></tr>"
-        html += "</tbody></table>"
-    else:
-        html += "<div class='card'><b>Ainda não há concorrentes suficientemente identificados nesta execução.</b><p class='muted'>Configure CONCORRENTES ou aumente a coleta específica de mercado antes de tomar decisões ofensivas.</p></div>"
-    html += "</div><div class='section'><h2>Plano 30 / 60 / 90 dias</h2><div class='grid2'>"
-    for label, arr in [("30 dias",pacote.get('prioridades_30',[])),("60 dias",pacote.get('prioridades_60',[])),("90 dias",pacote.get('prioridades_90',[]))]:
-        html += f"<div class='card'><div class='label'>{label}</div>{''.join('<p>• '+html_escape(x)+'</p>' for x in arr[:5])}</div>"
-    html += "</div></div><div class='section'><h2>Lacunas de informação</h2><div class='card'>" + ''.join(f"<p>• {html_escape(x)}</p>" for x in pacote.get('lacunas',[])) + "</div></div>"
-    html += "<div class='section'><h2>Eventos mais relevantes</h2>"
-    for e in events[:15]:
-        est = e.get("estado_temporal")
-        badge = f"<span class='pill'>{html_escape(est)}</span> " if est else ""
-        html += f"<div class='source'>{badge}<b>{html_escape(e['kind'])}</b> — {html_escape(e['title'])}<div class='muted'>{e['importance']}/100 · confiança {int(float(e.get('confidence',0))*100)}% · {e.get('independent_source_count',1)} fonte(s) independente(s) · {html_escape(e.get('date') or 'data não identificada')} · {html_escape(ref_text(e.get('evidence_ids',[])))}</div></div>"
-    html += "</div><div class='section'><h2>Evidências auditáveis</h2><table><thead><tr><th>ID</th><th>Escopo</th><th>Data</th><th>Fonte</th><th>Título</th><th>Score</th></tr></thead><tbody>"
-    for f in fontes[:80]:
-        html += f"<tr><td>{f.id}</td><td>{html_escape(f.escopo)}</td><td>{html_escape(f.data_publicacao or 'não identificada')}</td><td>{html_escape(f.dominio)}</td><td>{html_escape(f.titulo)}</td><td>{f.score:.1f}</td></tr>"
-    html += "</tbody></table></div><div class='footer'>Agente Sniper v"+APP_VERSION+". Fatos devem ser interpretados junto das evidências referenciadas. Um sinal não é prova de causalidade financeira.</div></div></body></html>"
-    return html
-
-
-def gerar_pdf(pacote: Dict[str, Any], fontes: List[Fonte], events: List[Dict[str, Any]], ambiente: Dict[str, Any], memoria: Dict[str, Any]) -> Optional[str]:
-    if not FPDF:
-        return None
-    try:
-        pdf=FPDF(); pdf.set_auto_page_break(True,14); pdf.add_page()
-        pdf.set_fill_color(9,21,34); pdf.rect(0,0,210,48,"F")
-        pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",22); pdf.set_y(9)
-        pdf.cell(0,10,"AGENTE SNIPER",new_x=XPos.LMARGIN,new_y=YPos.NEXT,align="C")
-        pdf.set_font("Helvetica","B",15); pdf.cell(0,8,remover_acentos(EMPRESA_ALVO),new_x=XPos.LMARGIN,new_y=YPos.NEXT,align="C")
-        pdf.set_font("Helvetica","",9); pdf.cell(0,6,remover_acentos(f"Radar competitivo | {CIDADE}-{ESTADO} | {HOJE.strftime('%d/%m/%Y %H:%M')}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT,align="C")
-        pdf.set_y(58); pdf.set_text_color(20,30,40); pdf.set_font("Helvetica","B",17); pp=ambiente.get("pressao_competitiva",{}); pp_text="Pressao competitiva: nao calculada" if pp.get("score") is None else f"Pressao competitiva: {pp.get("score")}/100 ({pp.get("label")})"; pdf.cell(0,9,remover_acentos(pp_text),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        pdf.set_font("Helvetica","",10); pdf.multi_cell(0,5,remover_acentos("Este relatório separa evidência, evento, interpretação e decisão. Scores não representam impacto financeiro sem dados internos."),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        cp = pacote.get("comparacao_precos", {})
-        if cp.get("enabled"):
-            pdf.add_page(); pdf.set_text_color(19,67,110); pdf.set_font("Helvetica","B",15); pdf.cell(0,9,remover_acentos("COMPARADOR DE PREÇOS E PROMOÇÕES"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            pdf.set_text_color(25,35,45); pdf.set_font("Helvetica","",9)
-            pdf.multi_cell(0,5,remover_acentos(f"Status: {cp.get('status','')} | Produtos-base: {cp.get('produtos_alvo',0)} | Comparáveis: {cp.get('comparaveis',0)}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            for x in cp.get("maiores_gaps", [])[:10]:
-                dp = x.get("dif_percent")
-                txt = f"{x.get('produto_alvo','')} | {x.get('concorrente','')} | alvo R$ {x.get('alvo_preco','—')} | concorrente R$ {x.get('concorrente_preco','—')} | diferença {('—' if dp is None else f'{dp:+.1f}%')} | match {int(float(x.get('similaridade',0))*100)}%"
-                pdf.multi_cell(0,5,remover_acentos(txt),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            pdf.ln(3)
-            pdf.multi_cell(0,5,remover_acentos(f"Promoções detectadas: alvo {cp.get('promocoes_alvo',0)} | concorrentes {cp.get('promocoes_concorrentes',0)}. Preços sem correspondência confiável não entram no ranking."),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        for title, content in [("RESUMO EXECUTIVO",pacote.get('resumo_executivo',[])),("SINAIS DE DECISÃO",pacote.get('sinais',[])),("RADAR DE DIMENSÕES",[]),("RADAR DE EVENTOS",events[:25]),("PLANO 30 / 60 / 90 DIAS",None)]:
-            pdf.add_page(); pdf.set_text_color(19,67,110); pdf.set_font("Helvetica","B",15); pdf.cell(0,9,remover_acentos(title),new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.set_text_color(25,35,45)
-            if title=="RADAR DE DIMENSÕES":
-                pdf.set_font("Helvetica","",9)
-                for k,d in sorted(ambiente.get('dimensoes',{}).items(), key=lambda kv:kv[1].get('score',0), reverse=True):
-                    pdf.multi_cell(0,5,remover_acentos(f"{k}: {d.get('score',0)}/100 | {d.get('eventos',0)} eventos | {d.get('evidencias',0)} evidencias"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            elif title=="PLANO 30 / 60 / 90 DIAS":
-                pdf.set_font("Helvetica","",9)
-                for lab,arr in [("30 DIAS",pacote.get('prioridades_30',[])),("60 DIAS",pacote.get('prioridades_60',[])),("90 DIAS",pacote.get('prioridades_90',[]))]:
-                    pdf.set_font("Helvetica","B",10); pdf.cell(0,7,lab,new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.set_font("Helvetica","",9)
-                    for x in arr[:6]: pdf.multi_cell(0,5,"- "+remover_acentos(x),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            else:
-                pdf.set_font("Helvetica","",9)
-                if content and title=="SINAIS DE DECISÃO":
-                    for s in content[:10]:
-                        pdf.set_font("Helvetica","B",10); pdf.multi_cell(0,5,remover_acentos(f"{s.get('tipo')} | {s.get('impacto')} | {s.get('urgencia')} | {s.get('titulo')}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-                        pdf.set_font("Helvetica","",9); pdf.multi_cell(0,5,remover_acentos("Racional: "+str(s.get('racional',''))),new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.multi_cell(0,5,remover_acentos("Acao: "+str(s.get('acao',''))),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-                        pdf.set_font("Helvetica","I",8); pdf.multi_cell(0,4,remover_acentos("Evidencia: "+ref_text(s.get('evidence_ids',[]))),new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.ln(2); pdf.set_font("Helvetica","",9)
-                elif title=="RADAR DE EVENTOS":
-                    for e in content: pdf.multi_cell(0,4.5,remover_acentos(f"{e['kind']} | {e['importance']}/100 | conf. {int(float(e.get('confidence',0))*100)}% | {e.get('date') or 'sem data'} | {e['title']} | {ref_text(e.get('evidence_ids',[]))}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-                else:
-                    for x in (content or []): pdf.multi_cell(0,5,"- "+remover_acentos(x),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        pdf.add_page(); pdf.set_text_color(19,67,110); pdf.set_font("Helvetica","B",14); pdf.cell(0,8,"ANEXO - EVIDENCIAS AUDITAVEIS",new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.set_text_color(25,35,45)
-        for f in fontes:
-            pdf.set_font("Helvetica","B",8); pdf.multi_cell(0,4.5,remover_acentos(f"[FONTE {f.id}] {f.titulo}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-            pdf.set_font("Helvetica","",7); pdf.multi_cell(0,4,remover_acentos(f"{f.url} | Data: {f.data_publicacao or 'nao identificada'} | Escopo: {f.escopo} | Confianca: {f.confianca:.2f}"),new_x=XPos.LMARGIN,new_y=YPos.NEXT); pdf.ln(1)
-        caminho=PASTA_EXECUCAO/f"Sniper_{re.sub(r'[^A-Za-z0-9_-]+','_',EMPRESA_ALVO)}_{RUN_ID}.pdf"; pdf.output(str(caminho)); return str(caminho.resolve())
-    except Exception as e:
-        logger.error("[PDF] %s",str(e)[:200]); return None
 
 # ============================================================
-# 14. EXPORTAÇÃO
+# 14. EXPORTAÇÃO (REPORTS BINDINGS)
 # ============================================================
 
-def salvar_json(nome: str, obj: Any) -> str:
-    path = PASTA_EXECUCAO / nome
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    return str(path.resolve())
+def salvar_json(nome: str, obj: Any, pasta_execucao: Optional[Path] = None) -> str:
+    pasta = pasta_execucao if pasta_execucao is not None else PASTA_EXECUCAO
+    return _reports_salvar_json(nome, obj, pasta_execucao=pasta)
 
 
-def salvar_csv_fontes(fontes: List[Fonte]) -> str:
-    path = PASTA_EXECUCAO / "fontes.csv"
-    with path.open("w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow(["ID", "Categoria", "Titulo", "URL", "Data", "Origem", "Escopo", "Atual", "Score", "Confianca"])
-        for x in fontes:
-            w.writerow([x.id, x.categoria, x.titulo, x.url, x.data_publicacao, x.origem, x.escopo, x.atual, round(x.score, 1), round(x.confianca, 3)])
-    return str(path.resolve())
+def salvar_csv_fontes(fontes: List[Fonte], pasta_execucao: Optional[Path] = None) -> str:
+    pasta = pasta_execucao if pasta_execucao is not None else PASTA_EXECUCAO
+    return _reports_salvar_csv_fontes(fontes, pasta_execucao=pasta)
 
 # ============================================================
 # 15. MAIN
