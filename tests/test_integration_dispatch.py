@@ -17,7 +17,8 @@ class TestIntegrationDispatch(unittest.TestCase):
     """Testa o dispatch do EXTRACTION_ENGINE no ponto de integração do Agente Sniper."""
 
     def setUp(self):
-        self.ocr_path = str(Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json"))
+        p_canon = Path("fixtures/canonical_replay/ocr_bruto/49738-102_pagina_1.json")
+        self.ocr_path = str(p_canon if p_canon.exists() else Path("dados_browser/ocr_bruto/49738-102_pagina_1.json"))
         self.source = {
             "name": "Assai",
             "role": "competitor",

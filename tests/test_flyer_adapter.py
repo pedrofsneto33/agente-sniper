@@ -57,7 +57,7 @@ class TestFlyerAdapter(unittest.TestCase):
 
     def test_02_fixture_real_49738_sem_falso_positivo_peso(self):
         """Testa o adapter contra o fixture real ocr_bruto/49738-102_pagina_1.json."""
-        caminho_fixture = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_fixture = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_fixture.exists():
             self.skipTest("Fixture real 49738 não encontrada.")
 
@@ -105,7 +105,7 @@ class TestFlyerAdapter(unittest.TestCase):
 
     def test_03_fixture_real_49794_automotivo(self):
         """Testa o adapter contra o fixture real ocr_bruto/49794-102_pagina_1.json."""
-        caminho_fixture = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49794-102_pagina_1.json")
+        caminho_fixture = Path(r"dados_browser/ocr_bruto\49794-102_pagina_1.json")
         if not caminho_fixture.exists():
             self.skipTest("Fixture real 49794 não encontrada.")
 

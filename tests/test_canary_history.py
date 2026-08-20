@@ -91,7 +91,7 @@ class TestCanaryHistory(unittest.TestCase):
 
     def test_05_crash_generic_em_shadow_registra_flag_sem_quebrar_legacy(self):
         """5. Falha no Generic em modo Shadow registra generic_crashed=True sem derrubar o Legacy."""
-        ocr_path = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        ocr_path = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not ocr_path.exists():
             self.skipTest("Fixture real ausente.")
 

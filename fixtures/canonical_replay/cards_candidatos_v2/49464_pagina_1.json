@@ -1,0 +1,1570 @@
+{
+  "arquivo": "49464_pagina_1",
+  "total_precos": 10,
+  "total_cards": 10,
+  "engine_utilizado": "extractors_v2_generic",
+  "cards": [
+    {
+      "id": 1,
+      "linha": 1,
+      "preco": {
+        "texto": "65,89",
+        "valor": 65.89
+      },
+      "regiao": {
+        "x_min": 0.0,
+        "y_min": 311.8,
+        "x_max": 834.7,
+        "y_max": 1526.0,
+        "largura": 834.7,
+        "altura": 1214.2
+      },
+      "textos": [
+        {
+          "texto": "ZASSO",
+          "confianca": 0.9935,
+          "bbox": {
+            "x_min": 228.3,
+            "y_min": 311.8,
+            "x_max": 834.7,
+            "y_max": 534.2,
+            "largura": 606.4,
+            "altura": 222.4
+          }
+        },
+        {
+          "texto": "8",
+          "confianca": 0.5605,
+          "bbox": {
+            "x_min": 0.0,
+            "y_min": 465.0,
+            "x_max": 241.0,
+            "y_max": 721.0,
+            "largura": 241.0,
+            "altura": 256.0
+          }
+        },
+        {
+          "texto": "ASSAI",
+          "confianca": 0.5599,
+          "bbox": {
+            "x_min": 390.3,
+            "y_min": 474.0,
+            "x_max": 685.7,
+            "y_max": 614.0,
+            "largura": 295.4,
+            "altura": 140.0
+          }
+        },
+        {
+          "texto": "FORZA",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 443.0,
+            "y_min": 1070.0,
+            "x_max": 500.0,
+            "y_max": 1087.0,
+            "largura": 57.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "FORZA",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 270.0,
+            "y_min": 1078.0,
+            "x_max": 327.0,
+            "y_max": 1095.0,
+            "largura": 57.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "rcoepado",
+          "confianca": 0.27,
+          "bbox": {
+            "x_min": 377.0,
+            "y_min": 1100.0,
+            "x_max": 435.0,
+            "y_max": 1112.0,
+            "largura": 58.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "Arouatico",
+          "confianca": 0.2917,
+          "bbox": {
+            "x_min": 272.0,
+            "y_min": 1110.0,
+            "x_max": 327.0,
+            "y_max": 1122.0,
+            "largura": 55.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "FORRÂBCE'",
+          "confianca": 0.307,
+          "bbox": {
+            "x_min": 364.0,
+            "y_min": 1137.0,
+            "x_max": 436.0,
+            "y_max": 1163.0,
+            "largura": 72.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "EM GRaOS",
+          "confianca": 0.3463,
+          "bbox": {
+            "x_min": 423.0,
+            "y_min": 1138.0,
+            "x_max": 487.0,
+            "y_max": 1152.0,
+            "largura": 64.0,
+            "altura": 14.0
+          }
+        },
+        {
+          "texto": "500g",
+          "confianca": 0.3315,
+          "bbox": {
+            "x_min": 440.0,
+            "y_min": 1148.0,
+            "x_max": 472.0,
+            "y_max": 1160.0,
+            "largura": 32.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "10096 Arabica",
+          "confianca": 0.4891,
+          "bbox": {
+            "x_min": 172.0,
+            "y_min": 1158.0,
+            "x_max": 259.0,
+            "y_max": 1170.0,
+            "largura": 87.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "CAFÉ TORRADO EM GRÃOS",
+          "confianca": 0.9776,
+          "bbox": {
+            "x_min": 148.0,
+            "y_min": 1215.0,
+            "x_max": 466.0,
+            "y_max": 1246.0,
+            "largura": 318.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "FORZA L'OR",
+          "confianca": 0.7377,
+          "bbox": {
+            "x_min": 148.0,
+            "y_min": 1245.0,
+            "x_max": 290.0,
+            "y_max": 1274.0,
+            "largura": 142.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "PACOTE 500G",
+          "confianca": 0.2853,
+          "bbox": {
+            "x_min": 148.0,
+            "y_min": 1275.0,
+            "x_max": 278.0,
+            "y_max": 1301.0,
+            "largura": 130.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "NOVA CAPSULA DE",
+          "confianca": 0.5147,
+          "bbox": {
+            "x_min": 109.0,
+            "y_min": 1494.0,
+            "x_max": 201.0,
+            "y_max": 1509.0,
+            "largura": 92.0,
+            "altura": 15.0
+          }
+        },
+        {
+          "texto": "ALUMÍNIO",
+          "confianca": 0.981,
+          "bbox": {
+            "x_min": 109.0,
+            "y_min": 1507.0,
+            "x_max": 186.0,
+            "y_max": 1526.0,
+            "largura": 77.0,
+            "altura": 19.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "PACOTE 500G FORZA L'OR",
+        "peso_volume": "PACOTE 500G",
+        "confianca": 0.8576
+      }
+    },
+    {
+      "id": 2,
+      "linha": 1,
+      "preco": {
+        "texto": "19,90",
+        "valor": 19.9
+      },
+      "regiao": {
+        "x_min": 532.0,
+        "y_min": 495.0,
+        "x_max": 1032.0,
+        "y_max": 1560.0,
+        "largura": 500.0,
+        "altura": 1065.0
+      },
+      "textos": [
+        {
+          "texto": "<",
+          "confianca": 0.893,
+          "bbox": {
+            "x_min": 668.0,
+            "y_min": 495.0,
+            "x_max": 724.0,
+            "y_max": 551.0,
+            "largura": 56.0,
+            "altura": 56.0
+          }
+        },
+        {
+          "texto": "DELICADO",
+          "confianca": 0.7028,
+          "bbox": {
+            "x_min": 957.0,
+            "y_min": 1030.0,
+            "x_max": 1032.0,
+            "y_max": 1047.0,
+            "largura": 75.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "00",
+          "confianca": 0.4098,
+          "bbox": {
+            "x_min": 1007.0,
+            "y_min": 1047.0,
+            "x_max": 1032.0,
+            "y_max": 1062.0,
+            "largura": 25.0,
+            "altura": 15.0
+          }
+        },
+        {
+          "texto": "intenso",
+          "confianca": 0.5876,
+          "bbox": {
+            "x_min": 814.0,
+            "y_min": 1067.0,
+            "x_max": 881.0,
+            "y_max": 1085.0,
+            "largura": 67.0,
+            "altura": 18.0
+          }
+        },
+        {
+          "texto": "250g",
+          "confianca": 0.5994,
+          "bbox": {
+            "x_min": 754.0,
+            "y_min": 1165.0,
+            "x_max": 791.0,
+            "y_max": 1182.0,
+            "largura": 37.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "CAFÉ GOURMET",
+          "confianca": 0.9996,
+          "bbox": {
+            "x_min": 718.0,
+            "y_min": 1220.0,
+            "x_max": 905.0,
+            "y_max": 1251.0,
+            "largura": 187.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "L'OR TIPOS",
+          "confianca": 0.7302,
+          "bbox": {
+            "x_min": 718.0,
+            "y_min": 1250.0,
+            "x_max": 855.0,
+            "y_max": 1276.0,
+            "largura": 137.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "PACOTE 250G",
+          "confianca": 0.6564,
+          "bbox": {
+            "x_min": 718.0,
+            "y_min": 1275.0,
+            "x_max": 847.0,
+            "y_max": 1301.0,
+            "largura": 129.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "NOVA CÁPSULA DE",
+          "confianca": 0.4818,
+          "bbox": {
+            "x_min": 575.0,
+            "y_min": 1445.0,
+            "x_max": 712.0,
+            "y_max": 1469.0,
+            "largura": 137.0,
+            "altura": 24.0
+          }
+        },
+        {
+          "texto": "ALUMÍNIO",
+          "confianca": 0.998,
+          "bbox": {
+            "x_min": 575.0,
+            "y_min": 1463.0,
+            "x_max": 692.0,
+            "y_max": 1490.0,
+            "largura": 117.0,
+            "altura": 27.0
+          }
+        },
+        {
+          "texto": "NOVA CAPSULA DE",
+          "confianca": 0.6327,
+          "bbox": {
+            "x_min": 536.0,
+            "y_min": 1517.0,
+            "x_max": 668.0,
+            "y_max": 1536.0,
+            "largura": 132.0,
+            "altura": 19.0
+          }
+        },
+        {
+          "texto": "ALUMÍNIO",
+          "confianca": 0.9661,
+          "bbox": {
+            "x_min": 532.0,
+            "y_min": 1531.0,
+            "x_max": 649.0,
+            "y_max": 1560.0,
+            "largura": 117.0,
+            "altura": 29.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "PACOTE 250G L'OR TIPOS",
+        "peso_volume": "PACOTE 250G",
+        "confianca": 0.9026
+      }
+    },
+    {
+      "id": 3,
+      "linha": 1,
+      "preco": {
+        "texto": "26,90",
+        "valor": 26.9
+      },
+      "regiao": {
+        "x_min": 1255.0,
+        "y_min": 975.0,
+        "x_max": 1537.0,
+        "y_max": 1384.0,
+        "largura": 282.0,
+        "altura": 409.0
+      },
+      "textos": [
+        {
+          "texto": "MINEIRO",
+          "confianca": 0.974,
+          "bbox": {
+            "x_min": 1464.0,
+            "y_min": 975.0,
+            "x_max": 1524.0,
+            "y_max": 994.0,
+            "largura": 60.0,
+            "altura": 19.0
+          }
+        },
+        {
+          "texto": "19",
+          "confianca": 0.9936,
+          "bbox": {
+            "x_min": 1482.0,
+            "y_min": 1005.0,
+            "x_max": 1506.0,
+            "y_max": 1022.0,
+            "largura": 24.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "SUL DE MINAS",
+          "confianca": 0.7048,
+          "bbox": {
+            "x_min": 1276.0,
+            "y_min": 1015.0,
+            "x_max": 1378.0,
+            "y_max": 1032.0,
+            "largura": 102.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "Rado",
+          "confianca": 0.3581,
+          "bbox": {
+            "x_min": 1459.0,
+            "y_min": 1062.0,
+            "x_max": 1494.0,
+            "y_max": 1075.0,
+            "largura": 35.0,
+            "altura": 13.0
+          }
+        },
+        {
+          "texto": "durmet",
+          "confianca": 0.3419,
+          "bbox": {
+            "x_min": 1456.0,
+            "y_min": 1075.0,
+            "x_max": 1504.0,
+            "y_max": 1087.0,
+            "largura": 48.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "1008 Arabica",
+          "confianca": 0.2527,
+          "bbox": {
+            "x_min": 1283.0,
+            "y_min": 1083.0,
+            "x_max": 1371.0,
+            "y_max": 1097.0,
+            "largura": 88.0,
+            "altura": 14.0
+          }
+        },
+        {
+          "texto": "Cafe Torrado",
+          "confianca": 0.5667,
+          "bbox": {
+            "x_min": 1276.0,
+            "y_min": 1103.0,
+            "x_max": 1363.0,
+            "y_max": 1115.0,
+            "largura": 87.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "Gourmet",
+          "confianca": 0.7646,
+          "bbox": {
+            "x_min": 1318.0,
+            "y_min": 1115.0,
+            "x_max": 1376.0,
+            "y_max": 1127.0,
+            "largura": 58.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "250g",
+          "confianca": 0.5377,
+          "bbox": {
+            "x_min": 1311.0,
+            "y_min": 1140.0,
+            "x_max": 1346.0,
+            "y_max": 1157.0,
+            "largura": 35.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "CAFÉ SUL DE MINAS",
+          "confianca": 0.9882,
+          "bbox": {
+            "x_min": 1255.0,
+            "y_min": 1184.0,
+            "x_max": 1497.0,
+            "y_max": 1216.0,
+            "largura": 242.0,
+            "altura": 32.0
+          }
+        },
+        {
+          "texto": "MOGIANA OU CERRADO",
+          "confianca": 0.8725,
+          "bbox": {
+            "x_min": 1257.0,
+            "y_min": 1212.0,
+            "x_max": 1537.0,
+            "y_max": 1244.0,
+            "largura": 280.0,
+            "altura": 32.0
+          }
+        },
+        {
+          "texto": "MINEIRO L'OR",
+          "confianca": 0.9976,
+          "bbox": {
+            "x_min": 1257.0,
+            "y_min": 1240.0,
+            "x_max": 1427.0,
+            "y_max": 1269.0,
+            "largura": 170.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "PACOTE 250G",
+          "confianca": 0.9493,
+          "bbox": {
+            "x_min": 1255.0,
+            "y_min": 1275.0,
+            "x_max": 1384.0,
+            "y_max": 1301.0,
+            "largura": 129.0,
+            "altura": 26.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "PACOTE 250G MINEIRO L'OR",
+        "peso_volume": "PACOTE 250G",
+        "confianca": 0.9008
+      }
+    },
+    {
+      "id": 4,
+      "linha": 1,
+      "preco": {
+        "texto": "8,29",
+        "valor": 8.29
+      },
+      "regiao": {
+        "x_min": 1681.0,
+        "y_min": 376.0,
+        "x_max": 2219.0,
+        "y_max": 1384.0,
+        "largura": 538.0,
+        "altura": 1008.0
+      },
+      "textos": [
+        {
+          "texto": "VALIDADE",
+          "confianca": 0.9535,
+          "bbox": {
+            "x_min": 1684.0,
+            "y_min": 376.0,
+            "x_max": 1796.0,
+            "y_max": 403.0,
+            "largura": 112.0,
+            "altura": 27.0
+          }
+        },
+        {
+          "texto": "AGo/26",
+          "confianca": 0.3922,
+          "bbox": {
+            "x_min": 1936.0,
+            "y_min": 380.0,
+            "x_max": 2085.0,
+            "y_max": 424.0,
+            "largura": 149.0,
+            "altura": 44.0
+          }
+        },
+        {
+          "texto": "DAS OFERTAS",
+          "confianca": 0.6838,
+          "bbox": {
+            "x_min": 1681.0,
+            "y_min": 394.0,
+            "x_max": 1831.0,
+            "y_max": 423.0,
+            "largura": 150.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "SEG",
+          "confianca": 0.9997,
+          "bbox": {
+            "x_min": 1691.0,
+            "y_min": 427.0,
+            "x_max": 1740.0,
+            "y_max": 456.0,
+            "largura": 49.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "TER",
+          "confianca": 0.9999,
+          "bbox": {
+            "x_min": 1779.0,
+            "y_min": 427.0,
+            "x_max": 1826.0,
+            "y_max": 456.0,
+            "largura": 47.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "SEX",
+          "confianca": 0.9976,
+          "bbox": {
+            "x_min": 2020.0,
+            "y_min": 427.0,
+            "x_max": 2069.0,
+            "y_max": 456.0,
+            "largura": 49.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "QUA",
+          "confianca": 0.9983,
+          "bbox": {
+            "x_min": 1862.0,
+            "y_min": 429.0,
+            "x_max": 1916.0,
+            "y_max": 456.0,
+            "largura": 54.0,
+            "altura": 27.0
+          }
+        },
+        {
+          "texto": "QUI",
+          "confianca": 0.9997,
+          "bbox": {
+            "x_min": 1942.0,
+            "y_min": 429.0,
+            "x_max": 1991.0,
+            "y_max": 458.0,
+            "largura": 49.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "20",
+          "confianca": 0.9996,
+          "bbox": {
+            "x_min": 1940.0,
+            "y_min": 470.0,
+            "x_max": 1998.0,
+            "y_max": 518.0,
+            "largura": 58.0,
+            "altura": 48.0
+          }
+        },
+        {
+          "texto": "18",
+          "confianca": 1.0,
+          "bbox": {
+            "x_min": 1778.0,
+            "y_min": 471.0,
+            "x_max": 1834.0,
+            "y_max": 514.0,
+            "largura": 56.0,
+            "altura": 43.0
+          }
+        },
+        {
+          "texto": "19",
+          "confianca": 0.9482,
+          "bbox": {
+            "x_min": 1861.0,
+            "y_min": 471.0,
+            "x_max": 1917.0,
+            "y_max": 514.0,
+            "largura": 56.0,
+            "altura": 43.0
+          }
+        },
+        {
+          "texto": "21",
+          "confianca": 1.0,
+          "bbox": {
+            "x_min": 2019.0,
+            "y_min": 471.0,
+            "x_max": 2073.0,
+            "y_max": 514.0,
+            "largura": 54.0,
+            "altura": 43.0
+          }
+        },
+        {
+          "texto": "17",
+          "confianca": 1.0,
+          "bbox": {
+            "x_min": 1693.0,
+            "y_min": 473.0,
+            "x_max": 1747.0,
+            "y_max": 514.0,
+            "largura": 54.0,
+            "altura": 41.0
+          }
+        },
+        {
+          "texto": "8",
+          "confianca": 0.9146,
+          "bbox": {
+            "x_min": 2081.0,
+            "y_min": 513.0,
+            "x_max": 2219.0,
+            "y_max": 655.0,
+            "largura": 138.0,
+            "altura": 142.0
+          }
+        },
+        {
+          "texto": "2",
+          "confianca": 0.5004,
+          "bbox": {
+            "x_min": 1941.0,
+            "y_min": 909.0,
+            "x_max": 2013.0,
+            "y_max": 989.0,
+            "largura": 72.0,
+            "altura": 80.0
+          }
+        },
+        {
+          "texto": "LÚ V E L",
+          "confianca": 0.7567,
+          "bbox": {
+            "x_min": 1943.0,
+            "y_min": 1002.0,
+            "x_max": 2013.0,
+            "y_max": 1022.0,
+            "largura": 70.0,
+            "altura": 20.0
+          }
+        },
+        {
+          "texto": "Ultimo",
+          "confianca": 0.3002,
+          "bbox": {
+            "x_min": 1995.0,
+            "y_min": 1054.0,
+            "x_max": 2044.0,
+            "y_max": 1071.0,
+            "largura": 49.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "0 LÚ V E L",
+          "confianca": 0.8624,
+          "bbox": {
+            "x_min": 1800.0,
+            "y_min": 1055.0,
+            "x_max": 1885.0,
+            "y_max": 1072.0,
+            "largura": 85.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "CLASSIQUE",
+          "confianca": 0.4268,
+          "bbox": {
+            "x_min": 1848.0,
+            "y_min": 1093.0,
+            "x_max": 1915.0,
+            "y_max": 1107.0,
+            "largura": 67.0,
+            "altura": 14.0
+          }
+        },
+        {
+          "texto": "LOEAFE 59Lu",
+          "confianca": 0.5024,
+          "bbox": {
+            "x_min": 1814.0,
+            "y_min": 1124.0,
+            "x_max": 1894.0,
+            "y_max": 1148.0,
+            "largura": 80.0,
+            "altura": 24.0
+          }
+        },
+        {
+          "texto": "SOLUVE",
+          "confianca": 0.892,
+          "bbox": {
+            "x_min": 1863.0,
+            "y_min": 1125.0,
+            "x_max": 1908.0,
+            "y_max": 1137.0,
+            "largura": 45.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "409",
+          "confianca": 0.9981,
+          "bbox": {
+            "x_min": 1891.0,
+            "y_min": 1133.0,
+            "x_max": 1913.0,
+            "y_max": 1145.0,
+            "largura": 22.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "icon",
+          "confianca": 0.3032,
+          "bbox": {
+            "x_min": 1888.0,
+            "y_min": 1148.0,
+            "x_max": 1910.0,
+            "y_max": 1160.0,
+            "largura": 22.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "MOVA EMBALAGEI",
+          "confianca": 0.5071,
+          "bbox": {
+            "x_min": 1800.0,
+            "y_min": 1149.0,
+            "x_max": 1883.0,
+            "y_max": 1163.0,
+            "largura": 83.0,
+            "altura": 14.0
+          }
+        },
+        {
+          "texto": "42098",
+          "confianca": 0.4154,
+          "bbox": {
+            "x_min": 1887.0,
+            "y_min": 1157.0,
+            "x_max": 1916.0,
+            "y_max": 1181.0,
+            "largura": 29.0,
+            "altura": 24.0
+          }
+        },
+        {
+          "texto": "'Ou SEJA,",
+          "confianca": 0.435,
+          "bbox": {
+            "x_min": 1845.0,
+            "y_min": 1166.0,
+            "x_max": 1891.0,
+            "y_max": 1183.0,
+            "largura": 46.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "[REDUCAODE 100",
+          "confianca": 0.4222,
+          "bbox": {
+            "x_min": 1760.0,
+            "y_min": 1170.0,
+            "x_max": 1845.0,
+            "y_max": 1182.0,
+            "largura": 85.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "CAFÉ SOLÚVEL",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 1807.0,
+            "y_min": 1215.0,
+            "x_max": 1981.0,
+            "y_max": 1246.0,
+            "largura": 174.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "L'OR TIPOS",
+          "confianca": 0.9816,
+          "bbox": {
+            "x_min": 1807.0,
+            "y_min": 1245.0,
+            "x_max": 1944.0,
+            "y_max": 1274.0,
+            "largura": 137.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "POUCH 4OG",
+          "confianca": 0.795,
+          "bbox": {
+            "x_min": 1807.0,
+            "y_min": 1275.0,
+            "x_max": 1916.0,
+            "y_max": 1301.0,
+            "largura": 109.0,
+            "altura": 26.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "POUCH 4OG L'OR TIPOS",
+        "peso_volume": null,
+        "confianca": 0.9118
+      }
+    },
+    {
+      "id": 5,
+      "linha": 1,
+      "preco": {
+        "texto": "162,49",
+        "valor": 162.49
+      },
+      "regiao": {
+        "x_min": 1792.0,
+        "y_min": 1632.0,
+        "x_max": 2111.0,
+        "y_max": 1904.0,
+        "largura": 319.0,
+        "altura": 272.0
+      },
+      "textos": [
+        {
+          "texto": "m E L 0",
+          "confianca": 0.4624,
+          "bbox": {
+            "x_min": 1998.0,
+            "y_min": 1632.0,
+            "x_max": 2063.0,
+            "y_max": 1649.0,
+            "largura": 65.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "B A U N | L H A",
+          "confianca": 0.3002,
+          "bbox": {
+            "x_min": 1798.0,
+            "y_min": 1655.0,
+            "x_max": 1920.0,
+            "y_max": 1672.0,
+            "largura": 122.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "Preminm Csppuccine",
+          "confianca": 0.4454,
+          "bbox": {
+            "x_min": 1792.0,
+            "y_min": 1679.0,
+            "x_max": 1925.0,
+            "y_max": 1700.0,
+            "largura": 133.0,
+            "altura": 21.0
+          }
+        },
+        {
+          "texto": "1624 9",
+          "confianca": 0.9227,
+          "bbox": {
+            "x_min": 2069.0,
+            "y_min": 1820.0,
+            "x_max": 2111.0,
+            "y_max": 1837.0,
+            "largura": 42.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "che",
+          "confianca": 0.2525,
+          "bbox": {
+            "x_min": 1898.0,
+            "y_min": 1840.0,
+            "x_max": 1925.0,
+            "y_max": 1852.0,
+            "largura": 27.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "CAPPUCCINO PREMIUM",
+          "confianca": 0.9985,
+          "bbox": {
+            "x_min": 1794.0,
+            "y_min": 1875.0,
+            "x_max": 2077.0,
+            "y_max": 1904.0,
+            "largura": 283.0,
+            "altura": 29.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "1624 9 CAPPUCCINO PREMIUM",
+        "peso_volume": null,
+        "confianca": 0.8085
+      }
+    },
+    {
+      "id": 6,
+      "linha": 1,
+      "preco": {
+        "texto": "18,49",
+        "valor": 18.49
+      },
+      "regiao": {
+        "x_min": 120.0,
+        "y_min": 1632.0,
+        "x_max": 578.0,
+        "y_max": 2847.0,
+        "largura": 458.0,
+        "altura": 1215.0
+      },
+      "textos": [
+        {
+          "texto": "R E 5 5",
+          "confianca": 0.2525,
+          "bbox": {
+            "x_min": 307.0,
+            "y_min": 1632.0,
+            "x_max": 367.0,
+            "y_max": 1649.0,
+            "largura": 60.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "R E",
+          "confianca": 0.3651,
+          "bbox": {
+            "x_min": 184.0,
+            "y_min": 1662.0,
+            "x_max": 214.0,
+            "y_max": 1679.0,
+            "largura": 30.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "INDIA",
+          "confianca": 0.9953,
+          "bbox": {
+            "x_min": 355.0,
+            "y_min": 1697.0,
+            "x_max": 407.0,
+            "y_max": 1714.0,
+            "largura": 52.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "FORZA",
+          "confianca": 0.9875,
+          "bbox": {
+            "x_min": 232.0,
+            "y_min": 1715.0,
+            "x_max": 284.0,
+            "y_max": 1732.0,
+            "largura": 52.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "KarnatakA",
+          "confianca": 0.4063,
+          "bbox": {
+            "x_min": 340.0,
+            "y_min": 1715.0,
+            "x_max": 405.0,
+            "y_max": 1727.0,
+            "largura": 65.0,
+            "altura": 12.0
+          }
+        },
+        {
+          "texto": "CÁPSULA DE CAFÉ L'OR",
+          "confianca": 0.8473,
+          "bbox": {
+            "x_min": 123.0,
+            "y_min": 1869.0,
+            "x_max": 400.0,
+            "y_max": 1901.0,
+            "largura": 277.0,
+            "altura": 32.0
+          }
+        },
+        {
+          "texto": "TIPOS",
+          "confianca": 0.9996,
+          "bbox": {
+            "x_min": 123.0,
+            "y_min": 1900.0,
+            "x_max": 202.0,
+            "y_max": 1926.0,
+            "largura": 79.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "CAIXETA COM 10 UNIDADES",
+          "confianca": 0.8147,
+          "bbox": {
+            "x_min": 120.0,
+            "y_min": 1927.0,
+            "x_max": 380.0,
+            "y_max": 1954.0,
+            "largura": 260.0,
+            "altura": 27.0
+          }
+        },
+        {
+          "texto": "PIX",
+          "confianca": 0.9886,
+          "bbox": {
+            "x_min": 337.0,
+            "y_min": 2731.0,
+            "x_max": 578.0,
+            "y_max": 2847.0,
+            "largura": 241.0,
+            "altura": 116.0
+          }
+        },
+        {
+          "texto": "PAGUE",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 136.0,
+            "y_min": 2738.0,
+            "x_max": 322.0,
+            "y_max": 2794.0,
+            "largura": 186.0,
+            "altura": 56.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "CAIXETA COM 10 UNIDADES TIPOS",
+        "peso_volume": "CAIXETA COM 10 UNIDADES",
+        "confianca": 0.9201
+      }
+    },
+    {
+      "id": 7,
+      "linha": 1,
+      "preco": {
+        "texto": "34,90",
+        "valor": 34.9
+      },
+      "regiao": {
+        "x_min": 587.0,
+        "y_min": 1677.0,
+        "x_max": 865.0,
+        "y_max": 2039.0,
+        "largura": 278.0,
+        "altura": 362.0
+      },
+      "textos": [
+        {
+          "texto": "s $",
+          "confianca": 0.4559,
+          "bbox": {
+            "x_min": 744.0,
+            "y_min": 1677.0,
+            "x_max": 776.0,
+            "y_max": 1694.0,
+            "largura": 32.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "Ristretto",
+          "confianca": 0.9311,
+          "bbox": {
+            "x_min": 744.0,
+            "y_min": 1722.0,
+            "x_max": 839.0,
+            "y_max": 1742.0,
+            "largura": 95.0,
+            "altura": 20.0
+          }
+        },
+        {
+          "texto": "11",
+          "confianca": 0.8852,
+          "bbox": {
+            "x_min": 817.0,
+            "y_min": 1743.0,
+            "x_max": 841.0,
+            "y_max": 1760.0,
+            "largura": 24.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "CÁPSULA DE CAFÉ L'OR",
+          "confianca": 0.8399,
+          "bbox": {
+            "x_min": 587.0,
+            "y_min": 1869.0,
+            "x_max": 865.0,
+            "y_max": 1901.0,
+            "largura": 278.0,
+            "altura": 32.0
+          }
+        },
+        {
+          "texto": "TIPOS",
+          "confianca": 0.9996,
+          "bbox": {
+            "x_min": 587.0,
+            "y_min": 1900.0,
+            "x_max": 666.0,
+            "y_max": 1926.0,
+            "largura": 79.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "CAIXETA COM 20 UNIDADES",
+          "confianca": 0.8182,
+          "bbox": {
+            "x_min": 587.0,
+            "y_min": 1930.0,
+            "x_max": 847.0,
+            "y_max": 1954.0,
+            "largura": 260.0,
+            "altura": 24.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "CAIXETA COM 20 UNIDADES TIPOS",
+        "peso_volume": "CAIXETA COM 20 UNIDADES",
+        "confianca": 0.8989
+      }
+    },
+    {
+      "id": 8,
+      "linha": 1,
+      "preco": {
+        "texto": "23,59",
+        "valor": 23.59
+      },
+      "regiao": {
+        "x_min": 129.0,
+        "y_min": 1869.0,
+        "x_max": 1935.0,
+        "y_max": 2808.0,
+        "largura": 1806.0,
+        "altura": 939.0
+      },
+      "textos": [
+        {
+          "texto": "CAFÉ SOLÚVEL",
+          "confianca": 0.9858,
+          "bbox": {
+            "x_min": 1036.0,
+            "y_min": 1869.0,
+            "x_max": 1211.0,
+            "y_max": 1901.0,
+            "largura": 175.0,
+            "altura": 32.0
+          }
+        },
+        {
+          "texto": "L'OR TIPOS",
+          "confianca": 0.9977,
+          "bbox": {
+            "x_min": 1036.0,
+            "y_min": 1900.0,
+            "x_max": 1173.0,
+            "y_max": 1926.0,
+            "largura": 137.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "VIDRO 84G",
+          "confianca": 0.6674,
+          "bbox": {
+            "x_min": 1036.0,
+            "y_min": 1930.0,
+            "x_max": 1141.0,
+            "y_max": 1954.0,
+            "largura": 105.0,
+            "altura": 24.0
+          }
+        },
+        {
+          "texto": "PREÇOS VÁLIDOS PARA TODAS AS LOJAS DO ESTADO DE SÃO PAULO, DE 17 A 21/08/2026 OU ENQUANTO DURAREM OS ESTOQUES DURANTE 0 PERÍODO DE",
+          "confianca": 0.6844,
+          "bbox": {
+            "x_min": 129.0,
+            "y_min": 2107.0,
+            "x_max": 1935.0,
+            "y_max": 2143.0,
+            "largura": 1806.0,
+            "altura": 36.0
+          }
+        },
+        {
+          "texto": "DESPERTE SEUS SENTIDOS",
+          "confianca": 0.9152,
+          "bbox": {
+            "x_min": 639.0,
+            "y_min": 2185.0,
+            "x_max": 1593.0,
+            "y_max": 2253.0,
+            "largura": 954.0,
+            "altura": 68.0
+          }
+        },
+        {
+          "texto": "Parcele suas compras em até",
+          "confianca": 0.9006,
+          "bbox": {
+            "x_min": 812.0,
+            "y_min": 2729.0,
+            "x_max": 1267.0,
+            "y_max": 2768.0,
+            "largura": 455.0,
+            "altura": 39.0
+          }
+        },
+        {
+          "texto": "SEM JUROS COM 0",
+          "confianca": 0.7413,
+          "bbox": {
+            "x_min": 973.0,
+            "y_min": 2764.0,
+            "x_max": 1343.0,
+            "y_max": 2808.0,
+            "largura": 370.0,
+            "altura": 44.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "VIDRO 84G L'OR TIPOS",
+        "peso_volume": "84G",
+        "confianca": 0.9498
+      }
+    },
+    {
+      "id": 9,
+      "linha": 1,
+      "preco": {
+        "texto": "29,79",
+        "valor": 29.79
+      },
+      "regiao": {
+        "x_min": 1388.0,
+        "y_min": 1717.0,
+        "x_max": 1637.0,
+        "y_max": 2047.0,
+        "largura": 249.0,
+        "altura": 330.0
+      },
+      "textos": [
+        {
+          "texto": "5 0 L Ú V E L",
+          "confianca": 0.3621,
+          "bbox": {
+            "x_min": 1539.0,
+            "y_min": 1717.0,
+            "x_max": 1637.0,
+            "y_max": 1734.0,
+            "largura": 98.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "0 L Ú V E L",
+          "confianca": 0.3682,
+          "bbox": {
+            "x_min": 1421.0,
+            "y_min": 1725.0,
+            "x_max": 1504.0,
+            "y_max": 1742.0,
+            "largura": 83.0,
+            "altura": 17.0
+          }
+        },
+        {
+          "texto": "CAFÉ SOLÚVEL",
+          "confianca": 0.9997,
+          "bbox": {
+            "x_min": 1390.0,
+            "y_min": 1875.0,
+            "x_max": 1565.0,
+            "y_max": 1906.0,
+            "largura": 175.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "CLASSIQUE L'OR",
+          "confianca": 0.9962,
+          "bbox": {
+            "x_min": 1390.0,
+            "y_min": 1905.0,
+            "x_max": 1587.0,
+            "y_max": 1936.0,
+            "largura": 197.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "VIDRO 130G",
+          "confianca": 0.9641,
+          "bbox": {
+            "x_min": 1388.0,
+            "y_min": 1937.0,
+            "x_max": 1507.0,
+            "y_max": 1964.0,
+            "largura": 119.0,
+            "altura": 27.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "VIDRO 130G CLASSIQUE L'OR",
+        "peso_volume": "130G",
+        "confianca": 0.918
+      }
+    },
+    {
+      "id": 10,
+      "linha": 1,
+      "preco": {
+        "texto": "20,79",
+        "valor": 20.79
+      },
+      "regiao": {
+        "x_min": 1669.0,
+        "y_min": 1900.0,
+        "x_max": 2079.0,
+        "y_max": 2799.0,
+        "largura": 410.0,
+        "altura": 899.0
+      },
+      "textos": [
+        {
+          "texto": "L'OR SABORES",
+          "confianca": 0.9972,
+          "bbox": {
+            "x_min": 1794.0,
+            "y_min": 1900.0,
+            "x_max": 1969.0,
+            "y_max": 1929.0,
+            "largura": 175.0,
+            "altura": 29.0
+          }
+        },
+        {
+          "texto": "CAIXETA 156,8G OU 162,4G",
+          "confianca": 0.8346,
+          "bbox": {
+            "x_min": 1794.0,
+            "y_min": 1930.0,
+            "x_max": 2047.0,
+            "y_max": 1956.0,
+            "largura": 253.0,
+            "altura": 26.0
+          }
+        },
+        {
+          "texto": "PROMOÇÃO.",
+          "confianca": 0.9891,
+          "bbox": {
+            "x_min": 1930.0,
+            "y_min": 2103.0,
+            "x_max": 2079.0,
+            "y_max": 2148.0,
+            "largura": 149.0,
+            "altura": 45.0
+          }
+        },
+        {
+          "texto": "PLEASURE IS GOLD",
+          "confianca": 0.9811,
+          "bbox": {
+            "x_min": 1669.0,
+            "y_min": 2427.0,
+            "x_max": 1909.0,
+            "y_max": 2458.0,
+            "largura": 240.0,
+            "altura": 31.0
+          }
+        },
+        {
+          "texto": "DESCONTOS",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 1813.0,
+            "y_min": 2734.0,
+            "x_max": 2008.0,
+            "y_max": 2773.0,
+            "largura": 195.0,
+            "altura": 39.0
+          }
+        },
+        {
+          "texto": "EXCLUSIVOS NO",
+          "confianca": 0.9343,
+          "bbox": {
+            "x_min": 1812.0,
+            "y_min": 2768.0,
+            "x_max": 2069.0,
+            "y_max": 2799.0,
+            "largura": 257.0,
+            "altura": 31.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "CAIXETA 156,8G OU 162,4G L'OR SABORES",
+        "peso_volume": "CAIXETA 156,8G OU 162,4G",
+        "confianca": 0.9825
+      }
+    }
+  ]
+}

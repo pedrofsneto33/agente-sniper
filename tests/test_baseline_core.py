@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Testes de Baseline de Regressão — Agente Sniper v11.8.0
 Verifica o comportamento das funções puras, normalizações, filtros e algoritmos.
@@ -104,10 +104,11 @@ class TestBaselineCore(unittest.TestCase):
 
     def test_11_identidade_conflitante(self):
         """Testa rejeição de homônimos de ferramentas e materiais de construção."""
-        self.assertTrue(sniper.identidade_conflitante("M Carvalho & Cia Ltda - loja de ferramentas em Teresina"))
-        self.assertTrue(sniper.identidade_conflitante("Carvalho Material de Construcao"))
-        self.assertFalse(sniper.identidade_conflitante("Supermercado Carvalho ofertas e precos"))
-        self.assertFalse(sniper.identidade_conflitante("Grupo Carvalho abre vagas no varejo"))
+        termos = ["ferramentas", "material de construcao", "loja de ferramentas", "madeira"]
+        self.assertTrue(sniper.identidade_conflitante("M Carvalho & Cia Ltda - loja de ferramentas em Teresina", termos_conflitantes=termos))
+        self.assertTrue(sniper.identidade_conflitante("Carvalho Material de Construcao", termos_conflitantes=termos))
+        self.assertFalse(sniper.identidade_conflitante("Supermercado Carvalho ofertas e precos", termos_conflitantes=termos))
+        self.assertFalse(sniper.identidade_conflitante("Grupo Carvalho abre vagas no varejo", termos_conflitantes=termos))
 
     def test_12_cidade_e_estado_ok(self):
         """Testa confirmação de localidade geográfica baseada no .env (Teresina-PI)."""

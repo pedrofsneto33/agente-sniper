@@ -403,7 +403,7 @@ class TestGeneralization(unittest.TestCase):
         from extractors.adapters.flyer_product_adapter import FlyerProductAdapter
         from extractors.bridge import carregar_ocr_bruto
 
-        ocr_dir = Path("dados_browser/ocr_bruto")
+        ocr_dir = (Path("fixtures/canonical_replay/ocr_bruto") if Path("fixtures/canonical_replay/ocr_bruto").exists() else Path("dados_browser/ocr_bruto"))
         ocr_files = sorted(list(ocr_dir.glob("*.json")))
         self.assertEqual(len(ocr_files), 10, "Devem existir exatamente 10 arquivos OCR de teste real.")
 
@@ -678,7 +678,7 @@ class TestGeneralization(unittest.TestCase):
         with patch("extractors.promotion_gate.comparar_documento_canary") as mock_canary:
             mock_rep = CanaryDocumentReport(documento_id="doc_fp", total_legacy=0, total_generic=1, fp_generic=1)
             mock_canary.return_value = mock_rep
-            ocr_files = sorted(list(Path(r"dados_browser/ocr_bruto").glob("*.json")))
+            ocr_files = sorted(list((Path("fixtures/canonical_replay/ocr_bruto") if Path("fixtures/canonical_replay/ocr_bruto").exists() else Path("dados_browser/ocr_bruto")).glob("*.json")))
             res_gate = gate.evaluate(ocr_files[:1])
             self.assertEqual(res_gate.decision, "FAIL")
             self.assertEqual(res_gate.gates["G2_fp_generic"]["status"], "FAIL")
@@ -745,7 +745,7 @@ class TestGeneralization(unittest.TestCase):
         self.assertIn("PLANO STARTER", res_saas.entidades[0].atributos.get("nome"))
 
         # E. Supermercado real via FlyerProductAdapter mantém 63/63 entidades
-        ocr_files = sorted(list(Path(r"dados_browser/ocr_bruto").glob("*.json")))
+        ocr_files = sorted(list((Path("fixtures/canonical_replay/ocr_bruto") if Path("fixtures/canonical_replay/ocr_bruto").exists() else Path("dados_browser/ocr_bruto")).glob("*.json")))
         tot_super = sum(len(fly_ad.processar_documento(carregar_ocr_bruto(f)).entidades) for f in ocr_files)
         self.assertEqual(tot_super, 63, "Supermercado real deve manter estritamente 63 entidades canônicas")
 
@@ -862,7 +862,7 @@ class TestGeneralization(unittest.TestCase):
         self.assertEqual(res_b2b.entidades[0].valor, 5000.00)
 
         # 7. Caso 1 real: 49464_pagina_1.json (falso 162,49 eliminado; 20,79 CADA preservado; 9 entidades)
-        path_caso1 = Path(r"dados_browser/ocr_bruto/49464_pagina_1.json")
+        path_caso1 = (Path("fixtures/canonical_replay/ocr_bruto/49464_pagina_1.json") if Path("fixtures/canonical_replay/ocr_bruto/49464_pagina_1.json").exists() else (Path("fixtures/canonical_replay/ocr_bruto/49464_pagina_1.json") if Path("fixtures/canonical_replay/ocr_bruto/49464_pagina_1.json").exists() else Path("dados_browser/ocr_bruto/49464_pagina_1.json")))
         if path_caso1.exists():
             doc_real_c1 = carregar_ocr_bruto(path_caso1)
             ad_flyer = FlyerProductAdapter()
@@ -1151,7 +1151,7 @@ class TestGeneralization(unittest.TestCase):
 
         # 8. Regressão Caso 1 Real (162,49 eliminado vs 20,79 preço vigente)
         ad_flyer = FlyerProductAdapter()
-        path_c1 = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49464_pagina_1.json")
+        path_c1 = Path(r"dados_browser/ocr_bruto\49464_pagina_1.json")
         if path_c1.exists():
             doc_c1 = carregar_ocr_bruto(path_c1)
             res_c1 = ad_flyer.processar_documento(doc_c1)

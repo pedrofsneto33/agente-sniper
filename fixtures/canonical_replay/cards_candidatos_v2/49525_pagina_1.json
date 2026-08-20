@@ -1,0 +1,127 @@
+{
+  "arquivo": "49525_pagina_1",
+  "total_precos": 1,
+  "total_cards": 1,
+  "engine_utilizado": "extractors_v2_generic",
+  "cards": [
+    {
+      "id": 1,
+      "linha": 1,
+      "preco": {
+        "texto": "2,04",
+        "valor": 2.04
+      },
+      "regiao": {
+        "x_min": 41.0,
+        "y_min": 351.0,
+        "x_max": 1067.0,
+        "y_max": 1625.0,
+        "largura": 1026.0,
+        "altura": 1274.0
+      },
+      "textos": [
+        {
+          "texto": "ASSAI",
+          "confianca": 0.9957,
+          "bbox": {
+            "x_min": 117.0,
+            "y_min": 351.0,
+            "x_max": 440.0,
+            "y_max": 451.0,
+            "largura": 323.0,
+            "altura": 100.0
+          }
+        },
+        {
+          "texto": "Infantil",
+          "confianca": 0.9998,
+          "bbox": {
+            "x_min": 476.1,
+            "y_min": 872.1,
+            "x_max": 558.9,
+            "y_max": 910.9,
+            "largura": 82.8,
+            "altura": 38.8
+          }
+        },
+        {
+          "texto": "Bucal",
+          "confianca": 0.7953,
+          "bbox": {
+            "x_min": 323.2,
+            "y_min": 1172.1,
+            "x_max": 408.8,
+            "y_max": 1215.9,
+            "largura": 85.6,
+            "altura": 43.8
+          }
+        },
+        {
+          "texto": "Higiene",
+          "confianca": 0.9997,
+          "bbox": {
+            "x_min": 198.8,
+            "y_min": 1181.0,
+            "x_max": 329.2,
+            "y_max": 1236.0,
+            "largura": 130.4,
+            "altura": 55.0
+          }
+        },
+        {
+          "texto": "AROTINA",
+          "confianca": 0.557,
+          "bbox": {
+            "x_min": 127.0,
+            "y_min": 1314.1,
+            "x_max": 200.0,
+            "y_max": 1370.9,
+            "largura": 73.0,
+            "altura": 56.8
+          }
+        },
+        {
+          "texto": "commAIS",
+          "confianca": 0.2592,
+          "bbox": {
+            "x_min": 98.0,
+            "y_min": 1325.1,
+            "x_max": 187.0,
+            "y_max": 1391.9,
+            "largura": 89.0,
+            "altura": 66.8
+          }
+        },
+        {
+          "texto": "Autocuiado",
+          "confianca": 0.5611,
+          "bbox": {
+            "x_min": 98.1,
+            "y_min": 1350.0,
+            "x_max": 212.9,
+            "y_max": 1432.0,
+            "largura": 114.8,
+            "altura": 82.0
+          }
+        },
+        {
+          "texto": "GRANDES OFERTAS DE",
+          "confianca": 0.9862,
+          "bbox": {
+            "x_min": 111.0,
+            "y_min": 1541.0,
+            "x_max": 1067.0,
+            "y_max": 1625.0,
+            "largura": 956.0,
+            "altura": 84.0
+          }
+        }
+      ],
+      "produto_normalizado": {
+        "nome": "Infantil Bucal",
+        "peso_volume": null,
+        "confianca": 0.8659
+      }
+    }
+  ]
+}

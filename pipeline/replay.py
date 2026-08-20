@@ -66,12 +66,17 @@ def resolver_fixture_fontes_offline(base_dir: Optional[Path] = None) -> List[Dic
             return json.loads(p.read_text(encoding="utf-8"))
         raise FileNotFoundError(f"[REPLAY OFFLINE ERRO] Fixture de ambiente não encontrada: {env_override}")
 
-    # 2. Fixture canônica fixa do repositório (congelada nas Fases 19-26)
-    canonical_fixture = base_dir / "sniper_resultados" / "20260819_162028" / "fontes.json"
+    # 2. Fixture canônica versionada no repositório (fixtures/canonical_replay)
+    canonical_fixture = base_dir / "fixtures" / "canonical_replay" / "fontes.json"
     if canonical_fixture.exists():
         return json.loads(canonical_fixture.read_text(encoding="utf-8"))
 
-    # 3. Falha explícita se nenhuma fixture canônica existir
+    # 3. Fallback legado (sniper_resultados/20260819_162028)
+    legacy_fixture = base_dir / "sniper_resultados" / "20260819_162028" / "fontes.json"
+    if legacy_fixture.exists():
+        return json.loads(legacy_fixture.read_text(encoding="utf-8"))
+
+    # 4. Falha explícita se nenhuma fixture canônica existir
     raise FileNotFoundError(f"[REPLAY OFFLINE ERRO] Fixture canônica de fontes não encontrada em: {canonical_fixture}")
 
 
@@ -85,7 +90,9 @@ def executar_replay_offline(
 
     with OfflineNetworkGuard():
         t_start = time.perf_counter()
-        ocr_dir = base_dir / "dados_browser" / "ocr_bruto"
+        ocr_dir = base_dir / "fixtures" / "canonical_replay" / "ocr_bruto"
+        if not ocr_dir.exists():
+            ocr_dir = base_dir / "dados_browser" / "ocr_bruto"
         if not ocr_dir.exists():
             print(f"[REPLAY OFFLINE ERRO] Diretório de OCR não encontrado: {ocr_dir}")
             if retornar_detalhes:

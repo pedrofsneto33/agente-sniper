@@ -25,7 +25,7 @@ class TestPromotionGate(unittest.TestCase):
     """Testes unitários determinísticos de todos os gates de promoção."""
 
     def setUp(self):
-        self.ocr_files = sorted(list(Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto").glob("*.json")))
+        self.ocr_files = sorted(list((Path("fixtures/canonical_replay/ocr_bruto") if Path("fixtures/canonical_replay/ocr_bruto").exists() else Path("dados_browser/ocr_bruto")).glob("*.json")))
 
     def test_01_pass_com_dataset_valido(self):
         """1. PASS quando todos os critérios técnicos e o limiar estatístico são atendidos."""

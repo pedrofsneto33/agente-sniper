@@ -26,7 +26,7 @@ class TestPromotionContract(unittest.TestCase):
 
     def test_01_contrato_completo_campos_price_item(self):
         """Valida que todos os 17 campos de PriceItem são gerados com tipos válidos pelo Generic."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
@@ -63,7 +63,7 @@ class TestPromotionContract(unittest.TestCase):
 
     def test_02_similaridade_e_matching_com_esteira_pricing(self):
         """Valida que similaridade_produto do domínio funciona com itens do Generic."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
@@ -85,7 +85,7 @@ class TestPromotionContract(unittest.TestCase):
 
     def test_03_replay_snapshots_em_sqlite_isolado(self):
         """Executa gravação de snapshots de preços em SQLite isolado (sem tocar no banco real)."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 

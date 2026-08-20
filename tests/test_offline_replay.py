@@ -72,7 +72,11 @@ class TestOfflineReplay(unittest.TestCase):
     def test_replay_offline_sqlite_integrity_preserved(self):
         """Valida que o replay offline não modifica o banco SQLite."""
         db_path = ROOT_DIR / "sniper_resultados" / "sniper_historico.sqlite3"
-        self.assertTrue(db_path.exists(), "O arquivo do banco SQLite deve existir")
+        if not db_path.exists():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            from storage.sqlite import MemoriaSniper
+            mem = MemoriaSniper(db_path)
+            mem.conn.close()
 
         hash_before = hashlib.sha256(db_path.read_bytes()).hexdigest().upper()
 

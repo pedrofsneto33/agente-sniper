@@ -38,6 +38,10 @@ def carregar_ocr_bruto(origem: Union[str, Path, Dict[str, Any]]) -> RawSpatialDo
     """
     if isinstance(origem, (str, Path)):
         caminho = Path(origem)
+        if not caminho.exists():
+            cand = Path("fixtures/canonical_replay/ocr_bruto") / caminho.name
+            if cand.exists():
+                caminho = cand
         identificador = caminho.stem
         with open(caminho, "r", encoding="utf-8") as f:
             dados = json.load(f)
@@ -207,7 +211,9 @@ def executar_pipeline_extracao(
         }
     else:
         # Modo LEGACY: leitura direta ou conversão básica a partir dos cards existentes
-        caminho_legacy = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\cards_candidatos_v2") / f"{doc_espacial.identificador}.json"
+        caminho_legacy = Path("fixtures/canonical_replay/cards_candidatos_v2") / f"{doc_espacial.identificador}.json"
+        if not caminho_legacy.exists():
+            caminho_legacy = Path("dados_browser/cards_candidatos_v2") / f"{doc_espacial.identificador}.json"
         if caminho_legacy.exists():
             with open(caminho_legacy, "r", encoding="utf-8") as f:
                 dados_legacy = json.load(f)

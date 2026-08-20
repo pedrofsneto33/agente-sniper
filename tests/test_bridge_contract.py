@@ -52,7 +52,7 @@ class TestBridgeContract(unittest.TestCase):
 
     def test_03_execucao_bridge_generic_vs_legacy_em_fixture_real(self):
         """Compara a execução da ponte nos modos legacy e generic sobre 49738-102_pagina_1.json."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
@@ -81,7 +81,7 @@ class TestBridgeContract(unittest.TestCase):
 
     def test_04_adapter_compatibilidade_reversa_cards(self):
         """Valida que converter_para_schema_legacy_cards produz o formato compatível com cards_candidatos_v2."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 

@@ -86,7 +86,7 @@ class TestShadowRobustness(unittest.TestCase):
 
     def test_06_idempotencia_estrita_execucao_dupla(self):
         """Garante que duas execuções sucessivas do mesmo documento geram saídas 100% idênticas."""
-        caminho_ocr = Path(r"C:\Users\User\Desktop\Agente sniper\dados_browser\ocr_bruto\49738-102_pagina_1.json")
+        caminho_ocr = Path(r"dados_browser/ocr_bruto\49738-102_pagina_1.json")
         if not caminho_ocr.exists():
             self.skipTest("Fixture real não encontrada.")
 
