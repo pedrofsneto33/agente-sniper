@@ -146,21 +146,20 @@ from reports import (
     salvar_json as _reports_salvar_json,
     salvar_csv_fontes as _reports_salvar_csv_fontes,
 )
+from llm import (
+    json_seguro,
+    build_system_prompt,
+    chamar_ollama,
+    chamar_gemini,
+    chamar_groq,
+    chamar_llm_json,
+    gerar_inteligencia_llm as _llm_gerar_inteligencia_llm,
+    CACHE,
+    CACHE_TTL,
+)
 from storage.sqlite import MemoriaSniper as _StorageMemoriaSniper
 
 # ---------- dependências opcionais ----------
-try:
-    from groq import Groq
-except Exception:
-    Groq = None
-
-try:
-    from google import genai
-    from google.genai import types as genai_types
-except Exception:
-    genai = None
-    genai_types = None
-
 try:
     from tavily import TavilyClient
 except Exception:
@@ -452,21 +451,6 @@ def cidade_ok(texto: str, cidade: str = CIDADE) -> bool:
 
 def estado_ok(texto: str, estado: str = ESTADO) -> bool:
     return _domain_estado_ok(texto, estado)
-
-
-def json_seguro(texto: str) -> Optional[Dict[str, Any]]:
-    if not texto:
-        return None
-    s = texto.strip()
-    s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.I)
-    s = re.sub(r"\s*```$", "", s)
-    start, end = s.find("{"), s.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        return json.loads(s[start:end + 1])
-    except Exception:
-        return None
 
 
 def source_domain_root(url: str) -> str:
@@ -2110,189 +2094,20 @@ def score_momentum(events: List[Dict[str, Any]], fontes: List[Fonte]) -> int:
     return _domain_score_momentum(events, fontes, hoje=HOJE)
 
 # ============================================================
-# 10. LLM ESTRUTURADO (OPCIONAL)
+# 10. LLM ESTRUTURADO (LLM BINDINGS)
 # ============================================================
 
-client_groq = None
-client_gemini = None
-if CHAVE_GROQ and Groq:
-    try:
-        client_groq = Groq(api_key=CHAVE_GROQ)
-    except Exception:
-        pass
-if GEMINI_API_KEY and genai:
-    try:
-        client_gemini = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception:
-        pass
-
-CACHE: Dict[str, Tuple[str, float]] = {}
-CACHE_TTL = 21600
-
-SYSTEM_PROMPT = f"""
-Você é o motor de inteligência competitiva do Agente Sniper.
-Empresa: {EMPRESA_ALVO}
-Nicho: {NICHO}
-Local: {CIDADE}-{ESTADO}
-
-Você recebe evidências previamente coletadas. Não navegue, não invente fatos.
-Separe FATO de INFERÊNCIA ESTRATÉGICA. Nunca trate ausência de evidência como ausência.
-Toda afirmação factual precisa indicar evidence_ids. Não invente IDs.
-Seu trabalho é responder: o que mudou, por que importa, qual risco existe,
-qual oportunidade existe e que decisão deveria ser considerada.
-"""
-
-
-def chamar_ollama(prompt: str) -> Optional[str]:
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=4)
-        if r.status_code >= 400:
-            return None
-        r = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={"model": OLLAMA_MODELO, "prompt": SYSTEM_PROMPT + "\n\n" + prompt, "stream": False, "format": "json"},
-            timeout=180,
-        )
-        r.raise_for_status()
-        return str(r.json().get("response", "")).strip() or None
-    except Exception:
-        return None
-
-
-def chamar_gemini(prompt: str) -> Optional[str]:
-    if not client_gemini or not genai_types:
-        return None
-    for model in GEMINI_MODELOS:
-        try:
-            cfg = genai_types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=5000)
-            r = client_gemini.models.generate_content(model=model, contents=prompt, config=cfg)
-            txt = (getattr(r, "text", "") or "").strip()
-            if txt:
-                return txt
-        except Exception as e:
-            logger.warning("[GEMINI] %s: %s", model, str(e)[:120])
-    return None
-
-
-def chamar_groq(prompt: str) -> Optional[str]:
-    if not USAR_GROQ or not client_groq:
-        return None
-    for model in GROQ_MODELOS:
-        try:
-            kwargs: Dict[str, Any] = {
-                "model": model,
-                "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 5000,
-            }
-            # JSON Object Mode é suportado por alguns modelos; usamos somente quando solicitado pelo ambiente.
-            if os.getenv("GROQ_JSON_MODE", "1") == "1":
-                kwargs["response_format"] = {"type": "json_object"}
-            r = client_groq.chat.completions.create(**kwargs)
-            txt = (r.choices[0].message.content or "").strip()
-            if txt:
-                return txt
-        except Exception as e:
-            logger.warning("[GROQ] %s: %s", model, str(e)[:120])
-    return None
-
-
-def chamar_llm_json(prompt: str) -> Optional[Dict[str, Any]]:
-    key = sha1(SYSTEM_PROMPT + prompt)
-    cached = CACHE.get(key)
-    if cached and time.time() - cached[1] < CACHE_TTL:
-        return json_seguro(cached[0])
-    fornecedores = []
-    if os.getenv("USAR_OLLAMA", "1") == "1":
-        fornecedores.append(("ollama", chamar_ollama))
-    fornecedores += [("gemini", chamar_gemini)]
-    if USAR_GROQ:
-        fornecedores.append(("groq", chamar_groq))
-    for nome, fn in fornecedores:
-        try:
-            result = fn(prompt)
-            obj = json_seguro(result or "")
-            if obj:
-                CACHE[key] = (result or "", time.time())
-                logger.info("[IA] %s respondeu JSON", nome)
-                return obj
-        except Exception as e:
-            logger.warning("[IA] %s falhou: %s", nome, str(e)[:140])
-    return None
-
-
-def gerar_inteligencia_llm(fontes: List[Fonte], events: List[Dict[str, Any]], ambiente: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    evidencias = []
-    for f in sorted(fontes, key=lambda x: x.score, reverse=True)[:36]:
-        evidencias.append({
-            "id": f.id,
-            "titulo": truncar(f.titulo, 180),
-            "url": f.url,
-            "categoria": f.categoria,
-            "data": f.data_publicacao,
-            "atual": f.atual,
-            "escopo": f.escopo,
-            "score": round(f.score, 1),
-            "confianca": round(f.confianca, 2),
-            "trecho": truncar(f.resumo_busca or f.conteudo, 650),
-        })
-    prompt = f"""
-RETORNE SOMENTE JSON VÁLIDO. Você é o estrategista de inteligência competitiva do Agente Sniper.
-Empresa: {EMPRESA_ALVO}
-Nicho: {NICHO}
-Local: {CIDADE}-{ESTADO}
-
-OBJETIVO:
-Transformar fatos públicos em decisões úteis. Não invente fatos.
-Uma ação estratégica pode ser uma inferência, mas deve estar claramente apoiada por evidence_ids.
-Nunca trate uma única reclamação como problema estrutural.
-Nunca use uma fonte sem data como se fosse evidência recente.
-Nunca conte a mesma fonte como várias evidências independentes.
-Não trate diretório/catálogo como prova de desempenho, preço real ou crescimento.
-Não use fonte corporativa para afirmar desempenho local sem evidência local.
-Não invente concorrentes: use apenas concorrentes configurados ou explicitamente identificados nas evidências. Um evento da própria empresa não pode ser descrito como movimento de um concorrente.
-
-SCHEMA:
-{{
-  "resumo_executivo": ["..."],
-  "sinais": [
-    {{"titulo":"...","tipo":"RISCO|OPORTUNIDADE|MOVIMENTO","impacto":"BAIXO|MEDIO|ALTO","urgencia":"BAIXA|MEDIA|ALTA","racional":"...","acao":"...","evidence_ids":[1],"confianca":0.0,"limite":"..."}}
-  ],
-  "concorrencia": [
-    {{"nome":"...","movimento":"...","confianca":0.0,"evidence_ids":[1]}}
-  ],
-  "prioridades_30": ["..."],
-  "prioridades_60": ["..."],
-  "prioridades_90": ["..."],
-  "lacunas": ["..."]
-}}
-
-ÍNDICES PRELIMINARES:
-- atividade da empresa: ambiente_competitivo.score
-- pressão competitiva externa: pressao_competitiva.score (pode ser nulo)
-- vulnerabilidade da empresa: vulnerabilidade_empresa.score
-- momentum do mercado: momentum_mercado
-
-{json.dumps(ambiente, ensure_ascii=False)}
-
-EVENTOS CANÔNICOS:
-Cada event_id representa um fato. Não crie eventos adicionais a partir das mesmas evidências.
-{json.dumps(events[:36], ensure_ascii=False)}
-
-EVIDÊNCIAS:
-{json.dumps(evidencias, ensure_ascii=False)}
-"""
-    obj = chamar_llm_json(prompt)
-    if not obj:
-        return None
-    ids_validos = {f.id for f in fontes}
-    for item in obj.get("sinais", []) or []:
-        if isinstance(item, dict):
-            item["evidence_ids"] = [int(x) for x in item.get("evidence_ids", []) if str(x).isdigit() and int(x) in ids_validos]
-    for item in obj.get("concorrencia", []) or []:
-        if isinstance(item, dict):
-            item["evidence_ids"] = [int(x) for x in item.get("evidence_ids", []) if str(x).isdigit() and int(x) in ids_validos]
-    return obj
+def gerar_inteligencia_llm(
+    fontes: List[Fonte],
+    events: List[Dict[str, Any]],
+    ambiente: Dict[str, Any],
+    **kwargs: Any,
+) -> Optional[Dict[str, Any]]:
+    kwargs.setdefault("empresa_alvo", EMPRESA_ALVO)
+    kwargs.setdefault("nicho", NICHO)
+    kwargs.setdefault("cidade", CIDADE)
+    kwargs.setdefault("estado", ESTADO)
+    return _llm_gerar_inteligencia_llm(fontes, events, ambiente, **kwargs)
 
 # ============================================================
 # 11. MOTOR DE DECISÃO & VALIDAÇÃO FORENSE (DOMAIN BINDINGS)
