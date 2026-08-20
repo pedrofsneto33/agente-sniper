@@ -166,6 +166,13 @@ from search import (
     coletar_tudo as _search_coletar_tudo,
     gerar_consultas as _search_gerar_consultas,
 )
+from web import (
+    PersistentPlaywrightManager,
+    enriquecer as _web_enriquecer,
+    extrair_html as _web_extrair_html,
+    extrair_pagina as _web_extrair_pagina,
+    extrair_playwright as _web_extrair_playwright,
+)
 
 # ---------- dependências opcionais ----------
 try:
@@ -515,242 +522,10 @@ _DOMAIN_EXPANSION_CACHE: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
 _SITEMAP_DEAD_DOMAINS: Set[str] = set()
 
 # ============================================================
-# FASE 18.3: PLAYWRIGHT PERSISTENTE & GERENCIADOR DE BROWSER
+# FASE 18.3: PLAYWRIGHT PERSISTENTE (WEB BINDINGS)
 # ============================================================
 
-class PersistentPlaywrightManager:
-    """Gerencia uma única instância persistente de Playwright/Chromium por run com isolamento entre páginas."""
-
-    def __init__(self):
-        self._pw = None
-        self._browser = None
-        self._lock = threading.Lock()
-        self._initialized = False
-
-        # Telemetria da Fase 18.3
-        self.launch_count = 0
-        self.contexts_created = 0
-        self.pages_created = 0
-        self.pages_closed = 0
-        self.startup_time = 0.0
-        self.navigation_time = 0.0
-        self.render_time = 0.0
-        self.success_count = 0
-        self.fail_count = 0
-        self.timeout_count = 0
-
-    def get_browser(self):
-        if not PLAYWRIGHT_ATIVO:
-            return None
-        with self._lock:
-            if self._browser is None and not self._initialized:
-                t0 = time.perf_counter()
-                try:
-                    from playwright.sync_api import sync_playwright
-                    self._pw = sync_playwright().start()
-                    self._browser = self._pw.chromium.launch(headless=True)
-                    self.launch_count += 1
-                    self.startup_time = time.perf_counter() - t0
-                    self._initialized = True
-                    logger.info("[PLAYWRIGHT POOL] Chromium persistente inicializado em %.2fs", self.startup_time)
-                except Exception as e:
-                    self._initialized = True
-                    logger.warning("[PLAYWRIGHT POOL] Falha ao inicializar Chromium: %s", str(e)[:150])
-                    self._browser = None
-                    self._pw = None
-            return self._browser
-
-    def new_isolated_context(self, user_agent: str = USER_AGENT, locale: str = "pt-BR"):
-        browser = self.get_browser()
-        if not browser:
-            return None
-        with self._lock:
-            try:
-                context = browser.new_context(user_agent=user_agent, locale=locale)
-                self.contexts_created += 1
-                return context
-            except Exception as e:
-                logger.debug("[PLAYWRIGHT POOL] Erro ao criar contexto isolado: %s", str(e)[:120])
-                return None
-
-    def extrair_pagina_playwright(self, url: str, timeout: int = 30000) -> Optional[Dict[str, Any]]:
-        context = self.new_isolated_context()
-        if not context:
-            return None
-        page = None
-        try:
-            with self._lock:
-                self.pages_created += 1
-            page = context.new_page()
-
-            t_nav = time.perf_counter()
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            with self._lock:
-                self.navigation_time += (time.perf_counter() - t_nav)
-
-            t_rend = time.perf_counter()
-            texto = page.locator("body").inner_text(timeout=12000)
-            title = page.title()
-            final_url = page.url
-            with self._lock:
-                self.render_time += (time.perf_counter() - t_rend)
-                self.success_count += 1
-
-            return {"conteudo": texto, "titulo": title, "final_url": final_url, "data_publicacao": ""}
-        except Exception as e:
-            with self._lock:
-                self.fail_count += 1
-                if "timeout" in str(e).lower():
-                    self.timeout_count += 1
-            logger.debug("[PLAYWRIGHT POOL] Falha ao extrair %s: %s", url[:80], str(e)[:120])
-            return None
-        finally:
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-                with self._lock:
-                    self.pages_closed += 1
-            try:
-                context.close()
-            except Exception:
-                pass
-
-    def extrair_html_preco(self, url: str, timeout: int = PRICE_PLAYWRIGHT_TIMEOUT) -> Tuple[str, str]:
-        context = self.new_isolated_context()
-        if not context:
-            return "", url
-        page = None
-        try:
-            with self._lock:
-                self.pages_created += 1
-            page = context.new_page()
-
-            t_nav = time.perf_counter()
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
-            try:
-                page.wait_for_load_state("networkidle", timeout=5000)
-            except Exception:
-                pass
-            with self._lock:
-                self.navigation_time += (time.perf_counter() - t_nav)
-
-            t_rend = time.perf_counter()
-            html = page.content()
-            final_url = page.url
-            with self._lock:
-                self.render_time += (time.perf_counter() - t_rend)
-                self.success_count += 1
-
-            return html, final_url
-        except Exception as e:
-            with self._lock:
-                self.fail_count += 1
-                if "timeout" in str(e).lower():
-                    self.timeout_count += 1
-            logger.warning("[PLAYWRIGHT POOL PREÇO] Falha %s: %s", url[:80], str(e)[:150])
-            return "", url
-        finally:
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-                with self._lock:
-                    self.pages_closed += 1
-            try:
-                context.close()
-            except Exception:
-                pass
-
-    def session_search(self, base_url: str, search_url_template: str, queries: List[str], location_hint: str = "") -> Dict[str, List[PriceItem]]:
-        results: Dict[str, List[PriceItem]] = {}
-        context = self.new_isolated_context()
-        if not context:
-            return results
-        page = None
-        try:
-            with self._lock:
-                self.pages_created += 1
-            page = context.new_page()
-
-            t_nav = time.perf_counter()
-            page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=12000)
-            except Exception:
-                pass
-            page.wait_for_timeout(1000)
-            base_text = page.locator("body").inner_text(timeout=12000) if page.locator("body") else ""
-            location_confirmed = bool(CIDADE and normalizar(CIDADE) in normalizar(base_text))
-            with self._lock:
-                self.navigation_time += (time.perf_counter() - t_nav)
-
-            for query in queries:
-                try:
-                    target_url = _buscar_preco_site(search_url_template, query)
-                    t_q = time.perf_counter()
-                    page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=10000)
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(1200)
-                    html = page.content()
-                    final_url = page.url
-                    with self._lock:
-                        self.navigation_time += (time.perf_counter() - t_q)
-                        self.success_count += 1
-                    note = location_hint
-                    if location_confirmed:
-                        note = (note + " | localização confirmada no contexto da sessão: " + CIDADE + ").").strip(" |")
-                    items = _extract_product_objects(html, "", "competitor", final_url, note)
-                    for item in items:
-                        item.location_note = note
-                    results[query] = items[:PRECO_MAX_RESULTADOS_POR_BUSCA]
-                except Exception as e:
-                    with self._lock:
-                        self.fail_count += 1
-                        if "timeout" in str(e).lower():
-                            self.timeout_count += 1
-                    logger.warning("[PLAYWRIGHT SESSION] busca '%s': %s", query[:80], str(e)[:120])
-                    results[query] = []
-        except Exception as e:
-            with self._lock:
-                self.fail_count += 1
-            logger.warning("[PLAYWRIGHT SESSION] falhou base %s: %s", base_url[:80], str(e)[:150])
-        finally:
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-                with self._lock:
-                    self.pages_closed += 1
-            try:
-                context.close()
-            except Exception:
-                pass
-        return results
-
-    def close_all(self):
-        with self._lock:
-            if self._browser:
-                try:
-                    self._browser.close()
-                except Exception:
-                    pass
-                self._browser = None
-            if self._pw:
-                try:
-                    self._pw.stop()
-                except Exception:
-                    pass
-                self._pw = None
-            self._initialized = False
-
-_PLAYWRIGHT_MGR = PersistentPlaywrightManager()
+_PLAYWRIGHT_MGR = PersistentPlaywrightManager(ativo=PLAYWRIGHT_ATIVO)
 
 # ============================================================
 # FASE 19: TAVILY BUDGET GUARD & CIRCUIT BREAKER (SEARCH BINDINGS)
@@ -1294,138 +1069,44 @@ def deduplicar(fontes: List[Fonte]) -> List[Fonte]:
     return out
 
 # ============================================================
-# 7. EXTRAÇÃO DIRETA
+# 7. EXTRAÇÃO DIRETA (WEB EXTRACTION BINDINGS)
 # ============================================================
 
 def extrair_html(url: str) -> Dict[str, Any]:
-    session = get_http_session()
-    r = session.get(
-        url,
-        headers={"Accept-Language": "pt-BR,pt;q=0.9"},
-        timeout=REQUEST_TIMEOUT,
-        allow_redirects=True,
-    )
-    r.raise_for_status()
-    return {"html": r.text, "final_url": r.url, "content_type": r.headers.get("content-type", "")}
+    return _web_extrair_html(url, session=get_http_session(), timeout=REQUEST_TIMEOUT)
 
 
 def extrair_playwright(url: str) -> Optional[Dict[str, Any]]:
-    if not PLAYWRIGHT_ATIVO:
-        return None
-    return _PLAYWRIGHT_MGR.extrair_pagina_playwright(url, timeout=30000)
+    return _web_extrair_playwright(url, mgr=_PLAYWRIGHT_MGR)
 
 
 def extrair_pagina(url: str) -> Dict[str, Any]:
-    try:
-        raw = extrair_html(url)
-        ctype = (raw.get("content_type") or "").lower()
-        if "html" not in ctype and "xhtml" not in ctype:
-            raise RuntimeError("não HTML")
-        soup = BeautifulSoup(raw["html"], "html.parser")
-        title = soup.title.get_text(" ", strip=True) if soup.title else ""
-        pub = ""
-        for m in soup.find_all("meta"):
-            key = normalizar(m.get("property") or m.get("name") or "")
-            value = str(m.get("content") or "").strip()
-            if key in {"article:published_time", "datepublished", "publish_date", "date"} and value:
-                pub = value
-                break
-        for s in soup.find_all("script", type="application/ld+json"):
-            try:
-                obj = json.loads(s.get_text(" ", strip=True))
-            except Exception:
-                continue
-            itens = obj if isinstance(obj, list) else [obj]
-            stack = list(itens)
-            while stack:
-                item = stack.pop()
-                if isinstance(item, dict):
-                    if isinstance(item.get("@graph"), list):
-                        stack.extend(item["@graph"])
-                    pub = pub or str(item.get("datePublished") or item.get("dateCreated") or "")
-                    title = title or str(item.get("headline") or item.get("name") or "")
-        for tag in soup(["script", "style", "noscript", "svg", "iframe", "form"]):
-            tag.decompose()
-        texto = soup.get_text("\n", strip=True)
-        texto = re.sub(r"\n{3,}", "\n\n", texto)
-        if len(texto) < 250 and PLAYWRIGHT_ATIVO:
-            raise RuntimeError("página quase vazia")
-        return {"titulo": title, "conteudo": texto, "data_publicacao": pub, "final_url": raw["final_url"], "direta": True}
-    except Exception:
-        pw = extrair_playwright(url)
-        if pw:
-            return {**pw, "direta": True}
-        return {"titulo": "", "conteudo": "", "data_publicacao": "", "final_url": url, "direta": False}
+    return _web_extrair_pagina(url, mgr=_PLAYWRIGHT_MGR, session=get_http_session())
 
 
 def enriquecer(fontes: List[Fonte]) -> List[Fonte]:
-    alvo = sorted(fontes, key=lambda x: x.score, reverse=True)[:MAX_ENRIQUECIMENTO]
-    if not alvo:
-        return []
-
-    _IO_STATS["enrich_tasks"] = len(alvo)
+    alvo_count = min(len(fontes), MAX_ENRIQUECIMENTO)
+    _IO_STATS["enrich_tasks"] = alvo_count
     t_start = time.perf_counter()
 
-    def _exec_enrich_task(item: Tuple[int, str]) -> Tuple[int, Dict[str, Any]]:
-        idx, url = item
-        logger.info("[EXTRAÇÃO %02d/%02d] %s", idx + 1, len(alvo), url)
-        try:
-            dados = extrair_pagina(url)
-            return idx, dados
-        except Exception as e:
-            logger.debug("[ENRICH WORKER] %s: %s", url[:80], str(e)[:120])
-            return idx, {"titulo": "", "conteudo": "", "data_publicacao": "", "final_url": url, "direta": False}
-
-    tasks = [(i, f.url) for i, f in enumerate(alvo)]
-    results_by_idx: Dict[int, Dict[str, Any]] = {}
-
-    with ThreadPoolExecutor(max_workers=ENRICH_MAX_WORKERS, thread_name_prefix="sniper-enrich") as executor:
-        future_to_idx = {executor.submit(_exec_enrich_task, t): t[0] for t in tasks}
-        for future in concurrent.futures.as_completed(future_to_idx):
-            try:
-                idx, dados = future.result()
-                results_by_idx[idx] = dados
-            except Exception as e:
-                idx = future_to_idx[future]
-                logger.warning("[ENRICH FUTURE] Tarefa %d falhou: %s", idx, str(e)[:120])
-                results_by_idx[idx] = {}
-
-    # Aplicação sequencial rigorosamente determinística
-    for i, f in enumerate(alvo):
-        dados = results_by_idx.get(i, {})
-        if not dados.get("conteudo"):
-            continue
-        old_snippet = f.resumo_busca
-        f.titulo = truncar(dados.get("titulo") or f.titulo, 320)
-        f.conteudo = truncar(dados.get("conteudo"), 18000)
-        f.resumo_busca = old_snippet
-        f.direta = bool(dados.get("direta"))
-        f.data_publicacao = str(dados.get("data_publicacao") or f.data_publicacao)
-        if f.data_publicacao:
-            d = parse_data(f.data_publicacao)
-            if d:
-                f.atual = d.year >= ANO_MINIMO_ATUAL
-                f.data_tipo = "publicada"
-        f.url = url_normalizada(dados.get("final_url") or f.url)
-        combined = f.texto()
-        a = alias_empresa(combined)
-        if a:
-            f.alias_empresa = a
-        f.cidade_confirmada = cidade_ok(combined)
-        f.estado_confirmado = estado_ok(combined)
-        if f.cidade_confirmada:
-            f.escopo = "local"
-        elif f.estado_confirmado:
-            f.escopo = "nacional"
-        f.sinais = sinais_deterministicos(combined)
-        f.score = score_fonte(f)
+    res = _web_enriquecer(
+        fontes=fontes,
+        max_enriquecimento=MAX_ENRIQUECIMENTO,
+        max_workers=ENRICH_MAX_WORKERS,
+        max_fontes_finais=MAX_FONTES_FINAIS,
+        mgr=_PLAYWRIGHT_MGR,
+        session=get_http_session(),
+        parse_data_fn=parse_data,
+        alias_empresa_fn=alias_empresa,
+        cidade_ok_fn=cidade_ok,
+        estado_ok_fn=estado_ok,
+        sinais_fn=sinais_deterministicos,
+        score_fonte_fn=score_fonte,
+    )
 
     _IO_STATS["enrich_time"] = time.perf_counter() - t_start
-    logger.info("[ENRIQUECIMENTO] %d fontes enriquecidas em %.2fs (concorrência N=%d)", len(alvo), _IO_STATS["enrich_time"], ENRICH_MAX_WORKERS)
-
-    for i, f in enumerate(sorted(fontes, key=lambda x: x.score, reverse=True), 1):
-        f.id = i
-    return sorted(fontes, key=lambda x: x.score, reverse=True)[:MAX_FONTES_FINAIS]
+    logger.info("[ENRIQUECIMENTO] %d fontes enriquecidas em %.2fs", alvo_count, _IO_STATS["enrich_time"])
+    return res
 
 # ============================================================
 # 8. MONITORAMENTO DE PREÇOS E PROMOÇÕES
@@ -1696,7 +1377,17 @@ def _playwright_session_search(base_url: str, search_url_template: str, queries:
     """Mantém uma única sessão Chromium por concorrente para preservar cookies/localização."""
     if not PRECO_USAR_PLAYWRIGHT:
         return {}
-    return _PLAYWRIGHT_MGR.session_search(base_url, search_url_template, queries, location_hint)
+    return _PLAYWRIGHT_MGR.session_search(
+        base_url,
+        search_url_template,
+        queries,
+        location_hint=location_hint,
+        buscar_preco_fn=_buscar_preco_site,
+        extract_products_fn=_extract_product_objects,
+        cidade=CIDADE,
+        normalizar_fn=normalizar,
+        max_results=PRECO_MAX_RESULTADOS_POR_BUSCA,
+    )
 
 
 def comparar_precos(fontes: List[Fonte], memoria: Optional[MemoriaSniper] = None, raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> Dict[str, Any]:
