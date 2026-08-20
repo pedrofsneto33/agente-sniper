@@ -69,6 +69,11 @@ from domain.scoring import (
     gerar_sinais_deterministicos,
     score_momentum,
 )
+from domain.decision import (
+    inteligencia_deterministica,
+    validar_ids_sinais,
+    validar_pacote,
+)
 
 __all__ = [
     "Fonte",
@@ -125,4 +130,7 @@ __all__ = [
     "acao_evento",
     "gerar_sinais_deterministicos",
     "score_momentum",
+    "inteligencia_deterministica",
+    "validar_ids_sinais",
+    "validar_pacote",
 ]
