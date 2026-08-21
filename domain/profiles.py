@@ -18,6 +18,22 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "emprego contratação nova unidade",
         ],
         "signals": ["preço", "oferta", "promoção", "fila", "produto", "entrega", "loja", "app", "delivery", "inauguração"],
+        "commercial_sources": [
+            {
+                "name": "Assaí Atacadista",
+                "role": "competitor",
+                "url": "https://www.assai.com.br/ofertas",
+                "channel_type": "flyer_ocr",
+                "location_note": "nacional",
+            },
+            {
+                "name": "Pão de Açúcar",
+                "role": "competitor",
+                "url": "https://www.paodeacucar.com",
+                "channel_type": "interactive_catalog",
+                "location_note": "nacional",
+            },
+        ],
     },
     "restaurante": {
         "label": "Alimentação e hospitalidade",
@@ -29,6 +45,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "fiscalização vigilância sanitária",
         ],
         "signals": ["cardápio", "preço", "delivery", "avaliação", "atendimento", "franquia", "unidade"],
+        "commercial_sources": [],
     },
     "clinica": {
         "label": "Saúde e serviços clínicos",
@@ -40,6 +57,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "licença fiscalização regulação",
         ],
         "signals": ["especialidade", "convênio", "consulta", "avaliação", "atendimento", "agendamento", "unidade"],
+        "commercial_sources": [],
     },
     "hotel": {
         "label": "Hotelaria",
@@ -51,6 +69,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "serviços experiência hóspede",
         ],
         "signals": ["diária", "hotel", "reserva", "ocupação", "avaliação", "hóspede", "serviço"],
+        "commercial_sources": [],
     },
     "farmacia": {
         "label": "Varejo farmacêutico",
@@ -62,6 +81,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "Anvisa Procon fiscalização",
         ],
         "signals": ["preço", "promoção", "medicamento", "delivery", "farmácia", "loja", "Anvisa"],
+        "commercial_sources": [],
     },
     "imobiliaria": {
         "label": "Mercado imobiliário",
@@ -73,6 +93,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "mercado vendas aluguel",
         ],
         "signals": ["imóvel", "lançamento", "preço", "aluguel", "vendas", "leads", "empreendimento"],
+        "commercial_sources": [],
     },
     "tecnologia": {
         "label": "Tecnologia e SaaS",
@@ -84,6 +105,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "contratação engenharia vendas",
         ],
         "signals": ["produto", "SaaS", "preço", "feature", "API", "parceria", "investimento"],
+        "commercial_sources": [],
     },
     "educacao": {
         "label": "Educação",
@@ -95,6 +117,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "vagas contratação professores",
         ],
         "signals": ["curso", "mensalidade", "matrícula", "aluno", "professor", "plataforma", "unidade"],
+        "commercial_sources": [],
     },
     "varejo": {
         "label": "Varejo geral",
@@ -106,6 +129,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "campanha marketing lançamento",
         ],
         "signals": ["preço", "promoção", "produto", "loja", "e-commerce", "app", "campanha"],
+        "commercial_sources": [],
     },
     "servicos": {
         "label": "Serviços",
@@ -117,6 +141,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "marketing parceria campanha",
         ],
         "signals": ["preço", "serviço", "avaliação", "atendimento", "agendamento", "parceria"],
+        "commercial_sources": [],
     },
     "generico": {
         "label": "Empresa genérica",
@@ -128,6 +153,7 @@ NICHE_PROFILES: Dict[str, Dict[str, Any]] = {
             "regulação fiscalização parceria",
         ],
         "signals": ["preço", "produto", "serviço", "avaliação", "expansão", "tecnologia", "marketing"],
+        "commercial_sources": [],
     },
 }
 

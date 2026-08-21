@@ -225,6 +225,73 @@ class TestPricingModule(unittest.TestCase):
             self.assertTrue(callable(getattr(sniper, s)))
             self.assertTrue(callable(getattr(pr, s)))
 
+    def test_10_niche_commercial_sources_loading(self):
+        """10. Valida carregamento automático das fontes comerciais do perfil de nicho na ausência de .env."""
+        with patch.dict("os.environ", {"PRECO_ALVO_URLS": "", "PRICE_SOURCES_JSON": ""}, clear=False):
+            # Supermercado carrega fontes comerciais auditadas
+            sources_super = carregar_price_sources(nicho="supermercado")
+            self.assertGreater(len(sources_super), 0)
+            names_super = {s["name"] for s in sources_super}
+            self.assertIn("Assaí Atacadista", names_super)
+            self.assertIn("Pão de Açúcar", names_super)
+            # Confirma que Carvalho inválido não está presente
+            self.assertNotIn("Carvalho Super", names_super)
+
+            # Farmácia e Genérico mantêm lista vazia no escopo saneado
+            self.assertEqual(carregar_price_sources(nicho="farmacia"), [])
+            self.assertEqual(carregar_price_sources(nicho="generico"), [])
+
+    def test_11_pricing_precedence_hierarchy(self):
+        """11. Valida precedência estrita: PRECO_ALVO_URLS > PRICE_SOURCES_JSON > perfil > vazio."""
+        # A. PRECO_ALVO_URLS tem precedência máxima
+        with patch.dict("os.environ", {
+            "PRECO_ALVO_URLS": "https://custom-target.com/ofertas",
+            "PRICE_SOURCES_JSON": '[{"name": "Custom Comp", "role": "competitor", "url": "https://custom-comp.com"}]'
+        }):
+            srcs = carregar_price_sources(nicho="supermercado")
+            self.assertEqual(len(srcs), 1)
+            self.assertEqual(srcs[0]["url"], "https://custom-target.com/ofertas")
+            self.assertEqual(srcs[0]["role"], "target")
+
+        # B. PRICE_SOURCES_JSON tem precedência sobre o perfil quando PRECO_ALVO_URLS está vazio
+        with patch.dict("os.environ", {
+            "PRECO_ALVO_URLS": "",
+            "PRICE_SOURCES_JSON": '[{"name": "JSON Comp", "role": "competitor", "url": "https://json-comp.com"}]'
+        }):
+            srcs = carregar_price_sources(nicho="supermercado")
+            self.assertEqual(len(srcs), 1)
+            self.assertEqual(srcs[0]["name"], "JSON Comp")
+
+        # C. Perfil é usado quando não há variáveis explícitas
+        with patch.dict("os.environ", {"PRECO_ALVO_URLS": "", "PRICE_SOURCES_JSON": ""}):
+            srcs = carregar_price_sources(nicho="supermercado")
+            names = {s["name"] for s in srcs}
+            self.assertIn("Assaí Atacadista", names)
+            self.assertIn("Pão de Açúcar", names)
+
+    def test_12_channel_type_declarative_safe_degradation(self):
+        """12. Valida degradação segura por canal: flyer_ocr e interactive_catalog sem adaptador não inventam preços."""
+        # A. flyer_ocr sem payload OCR retorna lista vazia sem tentar crawler HTML
+        src_flyer = {"name": "Assaí", "role": "competitor", "url": "https://assai.com.br/ofertas", "channel_type": "flyer_ocr"}
+        items_flyer = coletar_itens_preco_fonte(src_flyer)
+        self.assertEqual(items_flyer, [])
+
+        # B. interactive_catalog sem adaptador retorna lista vazia
+        src_inter = {"name": "Pão de Açúcar", "role": "competitor", "url": "https://paodeacucar.com", "channel_type": "interactive_catalog"}
+        items_inter = coletar_itens_preco_fonte(src_inter)
+        self.assertEqual(items_inter, [])
+
+        # C. html_catalog com HTML fornecido extrai produtos
+        html = """<html><head><script type="application/ld+json">
+        {"@context":"https://schema.org/","@type":"Product","name":"Feijão Carioca 1kg","offers":{"@type":"Offer","price":"7.99"}}
+        </script></head><body>Loja</body></html>"""
+        with patch("pricing.service._price_page_html", return_value=(html, "https://loja.com/feijao")):
+            src_html = {"name": "Loja Web", "role": "competitor", "url": "https://loja.com/feijao", "channel_type": "html_catalog"}
+            items_html = coletar_itens_preco_fonte(src_html)
+            self.assertEqual(len(items_html), 1)
+            self.assertEqual(items_html[0].name, "Feijão Carioca 1kg")
+            self.assertEqual(items_html[0].price, 7.99)
+
 
 if __name__ == "__main__":
     unittest.main()

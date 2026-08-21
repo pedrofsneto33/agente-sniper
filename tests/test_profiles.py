@@ -71,14 +71,15 @@ class TestNicheProfiles(unittest.TestCase):
         self.assertEqual(list(NICHE_PROFILES.keys()), self.EXPECTED_NICHES)
 
     def test_03_homogeneidade_estrutural(self):
-        """3. Valida que cada perfil possui exatamente as chaves 'label', 'queries' e 'signals'."""
+        """3. Valida que cada perfil possui exatamente as chaves 'label', 'queries', 'signals' e 'commercial_sources'."""
         for nicho, prof in NICHE_PROFILES.items():
             with self.subTest(nicho=nicho):
                 self.assertIsInstance(prof, dict)
-                self.assertEqual(set(prof.keys()), {"label", "queries", "signals"})
+                self.assertEqual(set(prof.keys()), {"label", "queries", "signals", "commercial_sources"})
                 self.assertIsInstance(prof["label"], str)
                 self.assertIsInstance(prof["queries"], list)
                 self.assertIsInstance(prof["signals"], list)
+                self.assertIsInstance(prof["commercial_sources"], list)
 
     def test_04_quantidades_queries_e_signals(self):
         """4. Valida quantidades esperadas de queries (5) e signals (>= 6)."""
@@ -144,6 +145,27 @@ class TestNicheProfiles(unittest.TestCase):
         self.assertIs(obter_perfil_nicho("supermercado"), NICHE_PROFILES["supermercado"])
         self.assertIs(obter_perfil_nicho("generico"), NICHE_PROFILES["generico"])
         self.assertIs(obter_perfil_nicho("desconhecido"), NICHE_PROFILES["generico"])
+
+    def test_13_commercial_sources_declarative_structure(self):
+        """13. Valida estrutura declarativa e integridade de commercial_sources por perfil."""
+        for nicho, prof in NICHE_PROFILES.items():
+            sources = prof["commercial_sources"]
+            self.assertIsInstance(sources, list)
+            for src in sources:
+                self.assertIsInstance(src, dict)
+                self.assertIn("name", src)
+                self.assertIn("role", src)
+                self.assertIn("url", src)
+                self.assertIn("channel_type", src)
+                self.assertIn(src["role"], {"target", "competitor"})
+                self.assertIn(src["channel_type"], {"html_catalog", "flyer_ocr", "interactive_catalog"})
+                self.assertTrue(src["url"].startswith("http"))
+
+        # Valida que supermercado possui fontes comerciais auditadas
+        self.assertGreater(len(NICHE_PROFILES["supermercado"]["commercial_sources"]), 0)
+        # Valida que farmacia e generico mantêm commercial_sources vazio no escopo saneado
+        self.assertEqual(len(NICHE_PROFILES["farmacia"]["commercial_sources"]), 0)
+        self.assertEqual(len(NICHE_PROFILES["generico"]["commercial_sources"]), 0)
 
 
 if __name__ == "__main__":

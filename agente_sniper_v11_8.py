@@ -742,7 +742,7 @@ def main() -> None:
         ambiente["vulnerabilidade_empresa"] = score_vulnerabilidade_empresa(events)
 
         memoria = MemoriaSniper(DB_PATH)
-        comparacao_precos = comparar_precos(fontes, memoria, raw_results=brutas, tavily_client=tavily_client)
+        comparacao_precos = comparar_precos(fontes, memoria, raw_results=brutas, tavily_client=tavily_client, nicho=NICHO)
         ambiente["comparacao_precos"] = comparacao_precos
         memoria_stats = memoria.save_run(RUN_ID, fontes, events)
 

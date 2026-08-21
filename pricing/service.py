@@ -27,6 +27,7 @@ from domain.normalizer import normalizar, parse_money
 from domain.identity import dominio, sha1, url_normalizada
 from domain.matching import similaridade_produto
 from domain.pricing import detectar_mudancas_preco, calcular_serie_temporal_precos
+from domain.profiles import obter_perfil_nicho
 from web.browser import PersistentPlaywrightManager
 
 logger = logging.getLogger("agente_sniper.pricing")
@@ -36,6 +37,7 @@ HOJE = datetime.now()
 RUN_ID = HOJE.strftime("%Y%m%d_%H%M%S")
 
 EMPRESA_ALVO = os.getenv("EMPRESA_ALVO", "Supermercado Carvalho").strip()
+NICHO = os.getenv("NICHO", "supermercado").strip()
 CIDADE = os.getenv("CIDADE", "Teresina").strip()
 ESTADO = os.getenv("ESTADO", "PI").strip()
 CONCORRENTES = [x.strip() for x in os.getenv("CONCORRENTES", "").split("|") if x.strip()]
@@ -167,19 +169,43 @@ def _commercial_signal_url(url: str) -> float:
     return max(-1.0, min(1.0, score))
 
 
-def carregar_price_sources() -> List[Dict[str, Any]]:
+def carregar_price_sources(nicho: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Carrega fontes comerciais de preços respeitando estritamente a precedência arquitetural:
+    1. PRECO_ALVO_URLS (explícito via .env ou parâmetro)
+    2. PRICE_SOURCES_JSON (explícito via .env ou parâmetro)
+    3. commercial_sources do perfil de nicho ativo (domain/profiles.py)
+    4. Lista vazia [] (permitindo auto-descoberta ou degradação segura)
+    """
+    empresa_alvo = os.getenv("EMPRESA_ALVO", EMPRESA_ALVO).strip()
+
+    # 1. PRECO_ALVO_URLS (Configuração explícita de URLs do alvo)
+    preco_alvo_urls_env = os.getenv("PRECO_ALVO_URLS", "").strip()
+    preco_alvo_urls = [x.strip() for x in preco_alvo_urls_env.split("|") if x.strip()] if preco_alvo_urls_env else PRECO_ALVO_URLS
+    if preco_alvo_urls:
+        return [{"name": empresa_alvo, "role": "target", "url": u} for u in preco_alvo_urls]
+
+    # 2. PRICE_SOURCES_JSON (Configuração explícita de catálogo JSON)
     preco_sources_json = os.getenv("PRICE_SOURCES_JSON", PRECO_SOURCES_JSON).strip()
     if preco_sources_json:
         try:
             obj = json.loads(preco_sources_json)
             if isinstance(obj, list):
-                return [x for x in obj if isinstance(x, dict) and x.get("name")]
+                sources = [x for x in obj if isinstance(x, dict) and x.get("name")]
+                if sources:
+                    return sources
         except Exception:
             pass
-    empresa_alvo = os.getenv("EMPRESA_ALVO", EMPRESA_ALVO).strip()
-    preco_alvo_urls_env = os.getenv("PRECO_ALVO_URLS", "")
-    preco_alvo_urls = [x.strip() for x in preco_alvo_urls_env.split("|") if x.strip()] if preco_alvo_urls_env else PRECO_ALVO_URLS
-    return [{"name": empresa_alvo, "role": "target", "url": u} for u in preco_alvo_urls]
+
+    # 3. commercial_sources declaradas no perfil de nicho ativo
+    if nicho is None:
+        nicho = os.getenv("NICHO", NICHO)
+    perfil = obter_perfil_nicho(nicho)
+    comm_sources = perfil.get("commercial_sources") or []
+    if isinstance(comm_sources, list) and comm_sources:
+        return [dict(x) for x in comm_sources if isinstance(x, dict) and x.get("name") and x.get("url")]
+
+    return []
 
 
 PRICE_SOURCES = carregar_price_sources()
@@ -470,10 +496,15 @@ def descobrir_fontes_preco(fontes: List[Fonte], raw_results: Optional[List[Dict[
     return uniq
 
 
-def mesclar_price_sources(fontes: List[Fonte], raw_results: Optional[List[Dict[str, Any]]] = None, tavily_client: Any = None) -> List[Dict[str, Any]]:
+def mesclar_price_sources(
+    fontes: List[Fonte],
+    raw_results: Optional[List[Dict[str, Any]]] = None,
+    tavily_client: Any = None,
+    nicho: Optional[str] = None
+) -> List[Dict[str, Any]]:
     merged = []
     seen = set()
-    price_sources = carregar_price_sources()
+    price_sources = carregar_price_sources(nicho=nicho)
     for src in list(price_sources) + descobrir_fontes_preco(fontes, raw_results=raw_results, tavily_client=tavily_client):
         name = str(src.get("name") or "").strip()
         url = str(src.get("url") or "").strip()
@@ -682,6 +713,7 @@ def coletar_itens_preco_fonte(source: Dict[str, Any], query: str = "") -> List[P
     role = source.get("role", "competitor")
     name = source.get("name", "Fonte")
     location_note = str(source.get("location_note", ""))
+    channel_type = str(source.get("channel_type", "html_catalog")).strip().lower()
 
     engine = os.getenv("EXTRACTION_ENGINE", EXTRACTION_ENGINE).strip().lower()
     if engine not in {"legacy", "generic", "shadow"}:
@@ -689,6 +721,16 @@ def coletar_itens_preco_fonte(source: Dict[str, Any], query: str = "") -> List[P
 
     # Se a fonte contiver arquivo ou payload de OCR bruto (folhetos, tablóides, encartes)
     ocr_origem = source.get("ocr_path") or source.get("ocr_json") or source.get("deteccoes")
+
+    # Fontes do tipo flyer_ocr sem payload OCR local: degradação segura e explícita
+    if channel_type == "flyer_ocr" and not ocr_origem:
+        logger.info("[PREÇOS] canal 'flyer_ocr' sem payload OCR local: %s (%s)", name, url)
+        return []
+
+    # Fontes do tipo interactive_catalog sem adaptador interativo: degradação segura e explícita
+    if channel_type == "interactive_catalog" and not source.get("search_url"):
+        logger.info("[PREÇOS] canal 'interactive_catalog' sem adaptador interativo: %s (%s)", name, url)
+        return []
     if ocr_origem:
         try:
             from extractors.bridge import executar_pipeline_extracao
@@ -789,7 +831,8 @@ def comparar_precos(
     fontes: List[Fonte],
     memoria: Optional[Any] = None,
     raw_results: Optional[List[Dict[str, Any]]] = None,
-    tavily_client: Any = None
+    tavily_client: Any = None,
+    nicho: Optional[str] = None
 ) -> Dict[str, Any]:
     monitorar = os.getenv("MONITORAR_PRECOS", "1") == "1"
     if not monitorar:
@@ -806,7 +849,7 @@ def comparar_precos(
                 series_temporais[f"{ent}::{s_dom}::{p_key}"] = d
         except Exception as e:
             logger.warning("[PRICE SERIES] Falha ao recuperar séries de preços: %s", str(e)[:100])
-    sources = mesclar_price_sources(fontes, raw_results=raw_results, tavily_client=tavily_client)
+    sources = mesclar_price_sources(fontes, raw_results=raw_results, tavily_client=tavily_client, nicho=nicho)
     logger.info("[PREÇOS] fontes candidatas=%d | budget_fetches=%d", len(sources), PRICE_MAX_HTTP_FETCHES)
     for _src in sources[:12]:
         logger.info("[PREÇOS] candidato %s | %s | %s", _src.get("role"), _src.get("name"), _src.get("url"))
