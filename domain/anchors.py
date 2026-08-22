@@ -68,6 +68,7 @@ DEFAULT_ANCHOR_RULES: Dict[str, Dict[str, Any]] = {
     "PESSOAS": {
         "keys": (
             "vaga", "vagas", "emprego", "contratacao", "recrutamento", "processo seletivo",
+            "funcionario",
         ),
         "base_confidence": 0.85,
         "priority": 2,
@@ -96,7 +97,7 @@ DEFAULT_ANCHOR_RULES: Dict[str, Dict[str, Any]] = {
     },
     "PREÇO": {
         "keys": (
-            "preco", "oferta", "promocao", "desconto",
+            "preco", "oferta", "promocao", "desconto", "r$",
         ),
         "base_confidence": 0.80,
         "priority": 6,
@@ -112,6 +113,7 @@ DEFAULT_ANCHOR_RULES: Dict[str, Dict[str, Any]] = {
     "MARKETING": {
         "keys": (
             "campanha", "publicidade", "patrocin", "marketing", "evento promocional",
+            "evento",
         ),
         "base_confidence": 0.70,
         "priority": 8,
@@ -119,7 +121,7 @@ DEFAULT_ANCHOR_RULES: Dict[str, Dict[str, Any]] = {
     "PRODUTO/SERVIÇO": {
         "keys": (
             "lancamento", "produto novo", "novo produto", "cardapio",
-            "catalogo", "servico",
+            "catalogo", "servico", "produto",
         ),
         "base_confidence": 0.75,
         "priority": 9,

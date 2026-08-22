@@ -53,6 +53,11 @@ GEMINI_MODELOS = [
     ).split(",") if x.strip()
 ]
 
+# DeepSeek configuration
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_MODELO = os.getenv("DEEPSEEK_MODELO", "deepseek-chat").strip()
+
+
 # ---------- clientes inicializados ----------
 client_groq = None
 client_gemini = None
@@ -195,6 +200,30 @@ def chamar_groq(
     return None
 
 
+def chamar_deepseek(prompt: str, system_prompt: Optional[str] = None) -> Optional[str]:
+    """Call DeepSeek API (OpenAI compatible) and return response text."""
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return None
+    url = "https://api.deepseek.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    messages = [{"role": "user", "content": prompt}]
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
+    payload = {"model": DEEPSEEK_MODELO, "messages": messages}
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        txt = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        return txt or None
+    except Exception as e:
+        logger.warning("[DEEPSEEK] %s: %s", DEEPSEEK_MODELO, str(e)[:120])
+        return None
+
 def chamar_llm_json(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -202,9 +231,10 @@ def chamar_llm_json(
 ) -> Optional[Dict[str, Any]]:
     """Dispatcher sequencial com fallback e cache TTL."""
     sys_p = system_prompt or build_system_prompt()
-    cache = CACHE if cache_dict is None else cache_dict
+    cache = {} if cache_dict is None else cache_dict
     key = sha1(sys_p + prompt)
     cached = cache.get(key)
+
     if cached and time.time() - cached[1] < CACHE_TTL:
         return json_seguro(cached[0])
 
@@ -214,6 +244,7 @@ def chamar_llm_json(
     fornecedores.append(("gemini", lambda p: chamar_gemini(p, system_prompt=sys_p)))
     if USAR_GROQ:
         fornecedores.append(("groq", lambda p: chamar_groq(p, system_prompt=sys_p)))
+    fornecedores.append(("deepseek", lambda p: chamar_deepseek(p, system_prompt=sys_p)))
 
     for nome, fn in fornecedores:
         try:

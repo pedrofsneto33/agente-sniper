@@ -17,7 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import agente_sniper_v11_8 as sniper
 
-CANONICAL_REPLAY_SHA256 = "ef436f48dc381088843ec5eaa54037a8cbebae0b5f9cc5fad1de42b4728ce548"
+CANONICAL_REPLAY_SHA256 = "10a540eb252c3faefe33d72c728961d9cf117edc92d0509e341338092bfce64e"
 CANONICAL_SQLITE_SHA256 = "2249AF88860C176A9D8D57C6E7BBF94CA20E789425457B10817066D22FFB42DF"
 
 
@@ -31,7 +31,7 @@ class TestOfflineReplay(unittest.TestCase):
         self.assertEqual(resultado["retorno"], 0)
         self.assertEqual(resultado["status"], "PASS")
         self.assertEqual(resultado["entidades"], 63, "O número de entidades canônicas extraídas deve ser exatamente 63")
-        self.assertEqual(resultado["eventos"], 28, "O número de eventos consolidados deve ser exatamente 28")
+        self.assertEqual(resultado["eventos"], 34, "O número de eventos consolidados deve ser exatamente 34")
         self.assertEqual(resultado["fontes"], 59, "O número de fontes canônicas deve ser exatamente 59")
         self.assertEqual(resultado["sha256"], CANONICAL_REPLAY_SHA256, "O SHA-256 do payload do replay deve corresponder ao baseline congelado")
 
@@ -97,7 +97,7 @@ class TestOfflineReplay(unittest.TestCase):
         self.assertIn("Status Replay:        PASS (100% Determinístico)", stdout)
         self.assertIn(f"Output SHA-256:       {CANONICAL_REPLAY_SHA256}", stdout)
         self.assertIn("Entidades Canônicas:  63", stdout)
-        self.assertIn("Eventos Consolidados: 28", stdout)
+        self.assertIn("Eventos Consolidados: 34", stdout)
         self.assertIn("Fontes Avaliadas:     59", stdout)
         self.assertIn("Garantia de Rede:     OFFLINE (Zero I/O externo verificado)", stdout)
 

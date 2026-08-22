@@ -18,7 +18,7 @@ from pipeline.replay import (
 import agente_sniper_v11_8 as sniper
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-CANONICAL_REPLAY_SHA256 = "ef436f48dc381088843ec5eaa54037a8cbebae0b5f9cc5fad1de42b4728ce548"
+CANONICAL_REPLAY_SHA256 = "10a540eb252c3faefe33d72c728961d9cf117edc92d0509e341338092bfce64e"
 
 
 class TestReplayService(unittest.TestCase):
@@ -30,7 +30,7 @@ class TestReplayService(unittest.TestCase):
         self.assertEqual(resultado["retorno"], 0)
         self.assertEqual(resultado["status"], "PASS")
         self.assertEqual(resultado["entidades"], 63)
-        self.assertEqual(resultado["eventos"], 28)
+        self.assertEqual(resultado["eventos"], 34)
         self.assertEqual(resultado["fontes"], 59)
         self.assertEqual(resultado["sha256"], CANONICAL_REPLAY_SHA256)
         self.assertIn("timings_ms", resultado)

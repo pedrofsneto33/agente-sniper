@@ -215,8 +215,8 @@ def executar_replay_offline(
         erros_validacao = []
         if len(extracted_entities) != 63:
             erros_validacao.append(f"Entidades divergiram: {len(extracted_entities)} != 63")
-        if len(eventos_gerados) != 28:
-            erros_validacao.append(f"Eventos divergiram: {len(eventos_gerados)} != 28")
+        if len(eventos_gerados) != 34:
+            erros_validacao.append(f"Eventos divergiram: {len(eventos_gerados)} != 34")
         if len(scored_fontes) != 59:
             erros_validacao.append(f"Fontes divergiram: {len(scored_fontes)} != 59")
 
