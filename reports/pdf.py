@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from domain.models import Fonte
 from domain.normalizer import remover_acentos
+from domain.opportunities import selecionar_oportunidades_executivas
 from reports.html import ref_text
 
 try:
@@ -91,13 +92,52 @@ def gerar_pdf(
             pdf.ln(3)
             pdf.multi_cell(0, 5, remover_acentos(f"Promoções detectadas: alvo {cp.get('promocoes_alvo',0)} | concorrentes {cp.get('promocoes_concorrentes',0)}. Preços sem correspondência confiável não entram no ranking."), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-        for title, content in [("RESUMO EXECUTIVO", pacote.get('resumo_executivo', [])), ("SINAIS DE DECISÃO", pacote.get('sinais', [])), ("RADAR DE DIMENSÕES", []), ("RADAR DE EVENTOS", events[:25]), ("PLANO 30 / 60 / 90 DIAS", None)]:
+        for title, content in [("RESUMO EXECUTIVO", pacote.get('resumo_executivo', [])), ("INTELIGENCIA ACIONAVEL E OPORTUNIDADES", pacote.get('oportunidades', [])), ("SINAIS DE DECISÃO", pacote.get('sinais', [])), ("RADAR DE DIMENSÕES", []), ("RADAR DE EVENTOS", events[:25]), ("PLANO 30 / 60 / 90 DIAS", None)]:
             pdf.add_page()
             pdf.set_text_color(19, 67, 110)
             pdf.set_font("Helvetica", "B", 15)
             pdf.cell(0, 9, remover_acentos(title), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_text_color(25, 35, 45)
-            if title == "RADAR DE DIMENSÕES":
+            if title == "INTELIGENCIA ACIONAVEL E OPORTUNIDADES":
+                pdf.set_font("Helvetica", "I", 7.5)
+                pdf.multi_cell(0, 3.5, remover_acentos("Salvaguarda: Acoes sugeridas tem carater consultivo para decisao humana. Solucoes e projetos adicionais nao integram automaticamente o escopo contratado."), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(1)
+                opps_deliv = selecionar_oportunidades_executivas(content or [], limite=8)
+                if opps_deliv:
+                    pdf.set_font("Helvetica", "", 9)
+                    for o in opps_deliv[:8]:
+                        cat = remover_acentos(str(o.get("category", "OPORTUNIDADE")))
+                        act_type = remover_acentos(str(o.get("action_type", "")).replace("_", " "))
+                        title_o = remover_acentos(str(o.get("title", "")))
+                        fact = remover_acentos(str(o.get("underlying_fact", "")))
+                        impact = remover_acentos(str(o.get("contextual_impact", "")))
+                        action = remover_acentos(str(o.get("recommended_action", "")))
+                        target = remover_acentos(str(o.get("target_entity", "")))
+                        ev_conf = int(float(o.get("evidence_confidence", 0)) * 100)
+                        opp_conf = int(float(o.get("opportunity_confidence", 0)) * 100)
+                        refs = ref_text(o.get("evidence_ids", []))
+                        trend_str = remover_acentos(str(o.get("temporal_trend", "INEDITO")).replace("_", " "))
+                        pdf.set_font("Helvetica", "B", 10)
+                        pdf.multi_cell(0, 5, f"[{cat} - {act_type} | {trend_str}] {title_o}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.set_font("Helvetica", "", 8.5)
+                        pdf.multi_cell(0, 4, f"Fato: {fact}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.multi_cell(0, 4, f"Impacto: {impact}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        if o.get("identified_need"):
+                            pdf.multi_cell(0, 4, remover_acentos(f"Necessidade: {o['identified_need']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.set_font("Helvetica", "B", 8.5)
+                        pdf.multi_cell(0, 4, f"Acao: {action}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        if o.get("contact_suggestion"):
+                            pdf.set_font("Helvetica", "I", 8)
+                            pdf.set_text_color(10, 80, 150)
+                            pdf.multi_cell(0, 4, remover_acentos(f"Sugestao de Contato: {o['contact_suggestion']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.set_font("Helvetica", "I", 7.5)
+                        prio_val = int(o.get("intelligence_priority", 0))
+                        pdf.multi_cell(0, 3.5, f"Tendencia: {trend_str} | Prioridade: {prio_val}/100 | Conf. Fato: {ev_conf}% | Conf. Hipotese: {opp_conf}% | Alvo: {target} | Evidencia: {refs}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.ln(2)
+                else:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.multi_cell(0, 5, "Nenhuma oportunidade acionavel nova ou atualizada identificada neste ciclo.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            elif title == "RADAR DE DIMENSÕES":
                 pdf.set_font("Helvetica", "", 9)
                 for k, d in sorted(ambiente.get('dimensoes', {}).items(), key=lambda kv: kv[1].get('score', 0), reverse=True):
                     pdf.multi_cell(0, 5, remover_acentos(f"{k}: {d.get('score',0)}/100 | {d.get('eventos',0)} eventos | {d.get('evidencias',0)} evidencias"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -112,12 +152,17 @@ def gerar_pdf(
             else:
                 pdf.set_font("Helvetica", "", 9)
                 if content and title == "SINAIS DE DECISÃO":
+                    pdf.set_font("Helvetica", "I", 7.5)
+                    pdf.multi_cell(0, 3.5, remover_acentos("Salvaguarda: Sinais indicam urgencia de monitoramento analitico para deliberacao do cliente e nao constituem obrigacao de execucao."), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(1)
                     for s in content[:10]:
                         pdf.set_font("Helvetica", "B", 10)
-                        pdf.multi_cell(0, 5, remover_acentos(f"{s.get('tipo')} | {s.get('impacto')} | {s.get('urgencia')} | {s.get('titulo')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        urg = str(s.get('urgencia', '')).upper()
+                        imp = str(s.get('impacto', '')).upper()
+                        pdf.multi_cell(0, 5, remover_acentos(f"{s.get('tipo')} | Impacto: {imp} | Monitoramento: {urg} | {s.get('titulo')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                         pdf.set_font("Helvetica", "", 9)
                         pdf.multi_cell(0, 5, remover_acentos("Racional: " + str(s.get('racional', ''))), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                        pdf.multi_cell(0, 5, remover_acentos("Acao: " + str(s.get('acao', ''))), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.multi_cell(0, 5, remover_acentos("Acao Sugerida para Avaliacao: " + str(s.get('acao', ''))), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                         pdf.set_font("Helvetica", "I", 8)
                         pdf.multi_cell(0, 4, remover_acentos("Evidencia: " + ref_text(s.get('evidence_ids', []))), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                         pdf.ln(2)

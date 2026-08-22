@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 from domain.models import Fonte
+from domain.opportunities import selecionar_oportunidades_executivas
 
 
 def ref_text(ids: Sequence[int]) -> str:
@@ -133,12 +134,67 @@ table{{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(
                 html_out += f"<tr><td><b>{p_nome}</b></td><td>{html_escape(s.get('entity',''))}</td><td>R$ {s.get('preco_atual',0.0):.2f}</td><td>{d7}</td><td>{d15}</td><td>{d30}</td><td>{s.get('volatilidade',0.0):.2f}</td><td style='color:{cor_tend};font-weight:700'>{tend}</td></tr>"
             html_out += "</tbody></table>"
         html_out += "</div>"
-    html_out += "<div class='section'><h2>Sinais que merecem decisão</h2>"
+    opps = pacote.get("oportunidades", [])
+    opps_deliv = selecionar_oportunidades_executivas(opps, limite=8)
+    html_out += "<div class='section'><h2>Inteligência Acionável & Oportunidades</h2>"
+    html_out += "<div class='card lead' style='background:#fcfdfe;border-left:4px solid var(--muted);margin-bottom:12px;font-size:12px;color:var(--muted)'><b>Salvaguarda de Escopo:</b> A inteligência analítica e as ações recomendadas têm caráter consultivo para decisão estratégica humana. Eventuais soluções ou projetos adicionais identificados não integram automaticamente o escopo contratado de inteligência competitiva e demandam escopo e contratação específicos.</div>"
+    if opps_deliv:
+        html_out += "<div class='grid2'>"
+        for o in opps_deliv[:8]:
+            cat = html_escape(o.get("category", "OPORTUNIDADE"))
+            act_type = html_escape(o.get("action_type", "").replace("_", " "))
+            title = html_escape(o.get("title", ""))
+            fact = html_escape(o.get("underlying_fact", ""))
+            impact = html_escape(o.get("contextual_impact", ""))
+            action = html_escape(o.get("recommended_action", ""))
+            target = html_escape(o.get("target_entity", ""))
+            ev_conf = int(float(o.get("evidence_confidence", 0)) * 100)
+            opp_conf = int(float(o.get("opportunity_confidence", 0)) * 100)
+            rel_score = float(o.get("relevance_score", 0))
+            refs = [x for x in o.get("evidence_ids", []) if x in fmap]
+            cit = html_escape(ref_text(refs))
+            gov = o.get("governance", {})
+            gov_badge = "<span class='pill' style='background:#e8f5e9;color:#1b5e20'>Escopo Contratado</span>" if gov.get("in_contracted_scope") else "<span class='pill' style='background:#fff3e0;color:#e65100'>Decisão Consultiva</span>"
+            sol_type_badge = ""
+            if gov.get("solution_type") and gov.get("solution_type") != "OUTRO":
+                sol_type_badge = f"<span class='pill' style='background:#f3e5f5;color:#4a148c'>{html_escape(gov.get('solution_type', '').replace('_', ' '))}</span>"
+            prio_badge = f"<span class='pill' style='background:#e8eaf6;color:#1a237e'>Prioridade: {int(o.get('intelligence_priority', 0))}/100</span>" if o.get("intelligence_priority") else ""
+            trend_val = o.get("temporal_trend", "INEDITO")
+            trend_map = {
+                "INEDITO": ("#e0f2fe", "#0369a1"),
+                "ACELERANDO": ("#fef3c7", "#b45309"),
+                "ESTABILIZADO": ("#f1f5f9", "#475569"),
+                "MARCO_CONCLUIDO": ("#dcfce7", "#15803d"),
+                "REATIVADO": ("#fae8ff", "#86198f"),
+            }
+            bg_t, fg_t = trend_map.get(trend_val, ("#f1f5f9", "#475569"))
+            trend_badge = f"<span class='pill' style='background:{bg_t};color:{fg_t}'>{html_escape(trend_val.replace('_', ' '))}</span>"
+            contact_box = ""
+            if o.get("contact_suggestion"):
+                contact_box = f"<div style='margin-top:10px;padding:10px;background:#eef6ff;border:1px solid #c8e1ff;border-radius:10px;font-size:12px;color:#0b4280'><b>Sugestão de Contato:</b> {html_escape(o['contact_suggestion'])}</div>"
+            det_change = ""
+            if o.get("detected_change") and o.get("detected_change") != "sem_mudanca_material":
+                det_change = f"<div style='font-size:11px;color:#a86200;font-weight:700;margin-top:4px'>Desdobramento: {html_escape(o['detected_change'])}</div>"
+            need_box = ""
+            if o.get("identified_need"):
+                need_box = f"<div style='font-size:12px;margin:4px 0'><b>Necessidade/Lacuna:</b> {html_escape(o['identified_need'])}</div>"
+            rationale_box = ""
+            if o.get("need_rationale"):
+                rationale_box = f"<div style='font-size:11px;color:var(--muted);margin-bottom:4px'><b>Fundamentação:</b> {html_escape(o['need_rationale'])}</div>"
+            html_out += f"<div class='card' style='border-left:5px solid var(--blue)'><div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px'><span class='pill'>{cat}</span><span class='pill' style='background:#e3f2fd;color:#0d47a1'>{act_type}</span>{trend_badge}{prio_badge}<span class='pill' style='background:#f1f8e9;color:#33691e'>Relevância: {rel_score:.1f}/100</span>{gov_badge}{sol_type_badge}</div><h3 style='margin:4px 0 8px;font-size:16px'>{title}</h3><div style='font-size:12px;color:var(--muted);margin-bottom:6px'><b>Fato:</b> {fact}</div>{det_change}<div style='font-size:12px;margin:6px 0'><b>Impacto Estratégico:</b> {impact}</div>{need_box}{rationale_box}<div class='action' style='font-size:13px;color:var(--ink);margin:8px 0'><b>AÇÃO RECOMENDADA:</b> {action}</div><div style='font-size:11px;color:var(--muted);margin-top:6px'>Confiança do Fato: {ev_conf}% · Confiança da Hipótese: {opp_conf}% · Entidade: {target} · {cit}</div>{contact_box}</div>"
+        html_out += "</div>"
+    else:
+        html_out += "<div class='card'><p class='muted'>Nenhuma oportunidade acionável nova ou atualizada identificada neste ciclo.</p></div>"
+    html_out += "</div>"
+    html_out += "<div class='section'><h2>Sinais Prioritários de Observação & Decisão</h2>"
+    html_out += "<div class='card lead' style='background:#fcfdfe;border-left:4px solid var(--muted);margin-bottom:12px;font-size:12px;color:var(--muted)'><b>Salvaguarda de Sinais:</b> Sinais indicam prioridade de monitoramento analítico para deliberação estratégica do cliente. Ações sugeridas têm caráter consultivo e não representam ordens operacionais nem obrigação de execução técnica.</div>"
     for s in sinais:
         typ = str(s.get('tipo', 'MOVIMENTO')).upper()
         cls = 'risk' if typ == 'RISCO' else 'opp' if typ == 'OPORTUNIDADE' else 'move'
+        urg = html_escape(str(s.get('urgencia', '')).upper())
+        imp = html_escape(str(s.get('impacto', '')).upper())
         refs = [x for x in s.get('evidence_ids', []) if x in fmap]
-        html_out += f"<div class='signal {cls}'><span class='pill'>{html_escape(typ)}</span><span class='pill'>{html_escape(s.get('impacto'))}</span><span class='pill'>{html_escape(s.get('urgencia'))}</span><h3>{html_escape(s.get('titulo'))}</h3><div class='muted'>{html_escape(s.get('limite'))} · confiança {int(float(s.get('confianca',0))*100)}%</div><p>{html_escape(s.get('racional'))}</p><p class='action'>AÇÃO: {html_escape(s.get('acao'))}</p><div class='muted'>Evidência: {html_escape(ref_text(refs))}</div></div>"
+        html_out += f"<div class='signal {cls}'><span class='pill'>{html_escape(typ)}</span><span class='pill'>Impacto: {imp}</span><span class='pill'>Urgência de Monitoramento: {urg}</span><h3>{html_escape(s.get('titulo'))}</h3><div class='muted'>Janela de avaliação: {html_escape(s.get('limite'))} · Confiança factual: {int(float(s.get('confianca',0))*100)}%</div><p><b>Racional:</b> {html_escape(s.get('racional'))}</p><p class='action'>AÇÃO SUGERIDA PARA AVALIAÇÃO: {html_escape(s.get('acao'))}</p><div class='muted'>Evidência: {html_escape(ref_text(refs))}</div></div>"
     html_out += "</div>"
     html_out += "<div class='section'><h2>Radar de concorrência</h2>"
     if concorrencia:

@@ -278,28 +278,13 @@ def canonical_event_key(f: Fonte, kind: str) -> str:
 
 def _primary_event_kind(f: Fonte, is_price_candidate_fn: Optional[Any] = None) -> Tuple[Optional[str], List[str]]:
     """Identifica a dimensão primária e dimensões correlatas a partir do texto da fonte."""
-    n = normalizar(f.texto())
-    if any(k in n for k in ["procon", "multa", "fiscalizacao", "anvisa", "vigilancia sanitaria"]):
-        return "REGULAÇÃO", ["REGULAÇÃO"]
-    if any(k in n for k in ["vaga", "vagas", "emprego", "contratacao", "contratação", "recrutamento", "processo seletivo"]):
-        return "PESSOAS", ["PESSOAS"] + (["EXPANSÃO"] if any(k in n for k in ["nova unidade", "nova loja", "inaugur", "filial"]) else [])
-    if any(k in n for k in ["inaugur", "nova unidade", "nova loja", "expansao", "expansão", "filial", "abre as portas", "instalação de", "instalacao de", "vai abrir", "planeja abrir"]):
-        return "EXPANSÃO", ["EXPANSÃO"]
-    if any(k in n for k in ["reclamacao", "reclamação", "reclame aqui", "queixa", "avaliacao", "avaliação", "nota"]):
-        return "REPUTAÇÃO", ["REPUTAÇÃO"]
-    if any(k in n for k in ["fila", "demora no atendimento", "mau atendimento", "suporte"]):
-        return "ATENDIMENTO", ["ATENDIMENTO"]
-    if any(k in n for k in ["preco", "preço", "oferta", "promocao", "promoção", "desconto"]):
-        if is_price_candidate_fn is None or is_price_candidate_fn(f.url, f.titulo, f.conteudo):
-            return "PREÇO", ["PREÇO"]
-    if any(k in n for k in ["app", "aplicativo", "delivery", "e-commerce", "ecommerce", "plataforma", "supershop"]):
-        return "DIGITAL", ["DIGITAL"]
-    if any(k in n for k in ["campanha", "publicidade", "patrocin", "marketing", "evento promocional"]):
-        return "MARKETING", ["MARKETING"]
-    if any(k in n for k in ["lancamento", "lançamento", "produto novo", "novo produto", "cardapio", "catalogo", "catálogo", "servico", "serviço"]):
-        return "PRODUTO/SERVIÇO", ["PRODUTO/SERVIÇO"]
-    if any(k in n for k in ["parceria", "acordo", "joint venture", "fornecedor"]):
-        return "PARCERIA", ["PARCERIA"]
+    from domain.anchors import classificar_ancora
+    cls = classificar_ancora(f.texto(), is_price_candidate_fn=is_price_candidate_fn, url=f.url, title=f.titulo)
+    if cls.is_known:
+        dims = [cls.category]
+        if cls.category == "PESSOAS" and "EXPANSÃO" in cls.secondary_categories:
+            dims.append("EXPANSÃO")
+        return cls.category, dims
     return None, []
 
 

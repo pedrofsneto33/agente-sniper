@@ -71,15 +71,16 @@ class TestNicheProfiles(unittest.TestCase):
         self.assertEqual(list(NICHE_PROFILES.keys()), self.EXPECTED_NICHES)
 
     def test_03_homogeneidade_estrutural(self):
-        """3. Valida que cada perfil possui exatamente as chaves 'label', 'queries', 'signals' e 'commercial_sources'."""
+        """3. Valida que cada perfil possui exatamente as chaves 'label', 'queries', 'signals', 'commercial_sources' e 'relevance_weights'."""
         for nicho, prof in NICHE_PROFILES.items():
             with self.subTest(nicho=nicho):
                 self.assertIsInstance(prof, dict)
-                self.assertEqual(set(prof.keys()), {"label", "queries", "signals", "commercial_sources"})
+                self.assertEqual(set(prof.keys()), {"label", "queries", "signals", "commercial_sources", "relevance_weights"})
                 self.assertIsInstance(prof["label"], str)
                 self.assertIsInstance(prof["queries"], list)
                 self.assertIsInstance(prof["signals"], list)
                 self.assertIsInstance(prof["commercial_sources"], list)
+                self.assertIsInstance(prof["relevance_weights"], dict)
 
     def test_04_quantidades_queries_e_signals(self):
         """4. Valida quantidades esperadas de queries (5) e signals (>= 6)."""

@@ -746,10 +746,10 @@ def main() -> None:
         ambiente["comparacao_precos"] = comparacao_precos
         memoria_stats = memoria.save_run(RUN_ID, fontes, events)
 
-        pacote = inteligencia_deterministica(fontes, events, ambiente)
+        pacote = inteligencia_deterministica(fontes, events, ambiente, profile=PROFILE)
         llm = gerar_inteligencia_llm(fontes, events, ambiente)
         if llm:
-            base = inteligencia_deterministica(fontes, events, ambiente)
+            base = inteligencia_deterministica(fontes, events, ambiente, profile=PROFILE)
             # O LLM complementa; nunca substitui os sinais determinísticos.
             for k, v in llm.items():
                 if v not in (None, "", []):

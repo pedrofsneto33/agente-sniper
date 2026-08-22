@@ -101,36 +101,39 @@ class MemoriaSniper:
                 since_date = (ref_dt - timedelta(days=EVENT_CONTEXTUAL_MAX_DAYS)).strftime("%Y-%m-%d")
             historico_eventos = self.get_event_history(since=since_date, limit_runs=None)
 
-        self.conn.execute(
-            "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?)",
-            (run_id, empresa, nicho, cidade, estado, timestamp)
-        )
-
-        for f in fontes:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?,?)",
-                (run_id, f.fingerprint, f.url, f.titulo, f.categoria, f.score, int(f.atual), sha1(f.conteudo))
-            )
-
-        for e in events:
-            # Contrato canônico: eventos usam event_id.
-            # event_key é aceito como compatibilidade com versões antigas.
-            event_key = e.get("event_id") or e.get("event_key")
-            if not event_key:
-                raise ValueError(
-                    "Evento inválido: ausência de event_id/event_key. "
-                    f"kind={e.get('kind')!r}, title={e.get('title')!r}"
+        try:
+            with self.conn:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?)",
+                    (run_id, empresa, nicho, cidade, estado, timestamp)
                 )
-            kind = str(e.get("kind") or "MOVIMENTO")
-            title = str(e.get("title") or "Evento sem título")
-            importance = int(float(e.get("importance", 0)))
-            evidence_ids = [int(x) for x in (e.get("evidence_ids") or []) if str(x).isdigit()]
-            self.conn.execute(
-                "INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,?)",
-                (run_id, event_key, kind, title, importance, json.dumps(evidence_ids), timestamp)
-            )
 
-        self.conn.commit()
+                for f in fontes:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?,?)",
+                        (run_id, f.fingerprint, f.url, f.titulo, f.categoria, f.score, int(f.atual), sha1(f.conteudo))
+                    )
+
+                for e in events:
+                    # Contrato canônico: eventos usam event_id.
+                    # event_key é aceito como compatibilidade com versões antigas.
+                    event_key = e.get("event_id") or e.get("event_key")
+                    if not event_key:
+                        raise ValueError(
+                            "Evento inválido: ausência de event_id/event_key. "
+                            f"kind={e.get('kind')!r}, title={e.get('title')!r}"
+                        )
+                    kind = str(e.get("kind") or "MOVIMENTO")
+                    title = str(e.get("title") or "Evento sem título")
+                    importance = int(float(e.get("importance", 0)))
+                    evidence_ids = [int(x) for x in (e.get("evidence_ids") or []) if str(x).isdigit()]
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?,?)",
+                        (run_id, event_key, kind, title, importance, json.dumps(evidence_ids), timestamp)
+                    )
+        except Exception:
+            self.conn.rollback()
+            raise
 
         old_hashes: Optional[Dict[str, str]] = None
         if prev:
@@ -170,28 +173,31 @@ class MemoriaSniper:
         changes = detectar_mudancas_preco(snapshots, old_prices, min_change_pct=min_change_pct)
         timestamp = captured_at or datetime.now().isoformat(timespec="seconds")
 
-        for x in snapshots:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO price_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    run_id,
-                    x.get("entity", ""),
-                    x.get("role", ""),
-                    x.get("source_domain", ""),
-                    x.get("product_key", ""),
-                    x.get("product_name", ""),
-                    x.get("brand", ""),
-                    x.get("unit", ""),
-                    x.get("price"),
-                    x.get("old_price"),
-                    int(bool(x.get("promotion"))),
-                    x.get("url", ""),
-                    x.get("location_note", ""),
-                    timestamp
-                )
-            )
-
-        self.conn.commit()
+        try:
+            with self.conn:
+                for x in snapshots:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO price_snapshots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            run_id,
+                            x.get("entity", ""),
+                            x.get("role", ""),
+                            x.get("source_domain", ""),
+                            x.get("product_key", ""),
+                            x.get("product_name", ""),
+                            x.get("brand", ""),
+                            x.get("unit", ""),
+                            x.get("price"),
+                            x.get("old_price"),
+                            int(bool(x.get("promotion"))),
+                            x.get("url", ""),
+                            x.get("location_note", ""),
+                            timestamp
+                        )
+                    )
+        except Exception:
+            self.conn.rollback()
+            raise
         return {
             "previous_run": prev,
             "gravados": len(snapshots),

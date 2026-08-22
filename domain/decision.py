@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Módulo de Decisão Estratégica e Validação Forense de Evidências — Agente Sniper
-Responsável por gerar o pacote executivo determinístico e validar integridade de sinais e evidências.
+Responsável por gerar o pacote executivo determinístico, orquestrar inteligência acionável
+e validar integridade de sinais, oportunidades e evidências.
 """
 from __future__ import annotations
 
@@ -10,15 +11,31 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from domain.models import Fonte
 from domain.normalizer import normalizar
 from domain.scoring import gerar_sinais_deterministicos
+from domain.deltas import MemoriaEntrega
+from domain.opportunities import gerar_oportunidades_acionaveis, selecionar_oportunidades_executivas
 
 
 def inteligencia_deterministica(
     fontes: Sequence[Fonte],
     events: Sequence[Dict[str, Any]],
-    ambiente: Dict[str, Any]
+    ambiente: Dict[str, Any],
+    profile: Optional[Dict[str, Any]] = None,
+    memoria_entrega: Optional[MemoriaEntrega] = None,
+    delivered_to: str = "default",
+    contract_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Gera o pacote executivo de inteligência competitiva determinístico."""
+    """Gera o pacote executivo de inteligência competitiva determinístico com governança de escopo."""
     sinais = gerar_sinais_deterministicos(fontes, events)
+    oportunidades_objs = gerar_oportunidades_acionaveis(
+        events=events,
+        fontes=fontes,
+        profile=profile,
+        memoria_entrega=memoria_entrega,
+        delivered_to=delivered_to,
+        contract_config=contract_config,
+    )
+    oportunidades = [o.to_dict() if hasattr(o, "to_dict") else o for o in oportunidades_objs]
+
     dims = ambiente.get("dimensoes", {})
     melhor_dim = sorted(dims.items(), key=lambda kv: kv[1].get("score", 0), reverse=True)
     lacunas = []
@@ -42,6 +59,7 @@ def inteligencia_deterministica(
     return {
         "resumo_executivo": resumo,
         "sinais": sinais,
+        "oportunidades": oportunidades,
         "concorrencia": [],
         "prioridades_30": [
             "Validar os 3 sinais de maior impacto com dados internos e contexto operacional.",
@@ -60,9 +78,9 @@ def inteligencia_deterministica(
 
 
 def validar_ids_sinais(pacote: Dict[str, Any], ids_validos: Set[int]) -> Tuple[bool, str]:
-    """Valida se todos os evidence_ids citados em sinais e concorrência pertencem aos IDs válidos."""
+    """Valida se todos os evidence_ids citados em sinais, oportunidades e concorrência pertencem aos IDs válidos."""
     invalidos = []
-    for campo in ("sinais", "concorrencia"):
+    for campo in ("sinais", "concorrencia", "oportunidades"):
         for item in pacote.get(campo, []) or []:
             if not isinstance(item, dict):
                 continue
@@ -77,15 +95,17 @@ def validar_ids_sinais(pacote: Dict[str, Any], ids_validos: Set[int]) -> Tuple[b
 def validar_pacote(pacote: Dict[str, Any], fontes: Sequence[Fonte]) -> Dict[str, Any]:
     """Realiza validação forense e saneamento do pacote de inteligência contra as fontes reais."""
     ids = {f.id for f in fontes}
+    fmap: Dict[int, Fonte] = {f.id: f for f in fontes}
     ok, reason = validar_ids_sinais(pacote, ids)
+
+    # Saneamento de sinais
     sinais_validos = []
     for s in pacote.get("sinais", []) or []:
         if not isinstance(s, dict):
             continue
         refs = [int(x) for x in s.get("evidence_ids", []) if str(x).isdigit() and int(x) in ids]
         if refs:
-            # Confiança não pode superar a melhor confiança das evidências.
-            max_conf = max((fontes[i-1].confianca for i in refs if 0 < i <= len(fontes)), default=0.0)
+            max_conf = max((fmap[i].confianca for i in refs if i in fmap), default=0.0)
             try:
                 s["confianca"] = min(float(s.get("confianca", max_conf)), max_conf)
             except Exception:
@@ -93,6 +113,25 @@ def validar_pacote(pacote: Dict[str, Any], fontes: Sequence[Fonte]) -> Dict[str,
             s["evidence_ids"] = sorted(set(refs))
             sinais_validos.append(s)
     pacote["sinais"] = sinais_validos
+
+    # Saneamento de oportunidades acionáveis
+    oportunidades_validas = []
+    for o in pacote.get("oportunidades", []) or []:
+        if not isinstance(o, dict):
+            continue
+        refs = [int(x) for x in o.get("evidence_ids", []) if str(x).isdigit() and int(x) in ids]
+        if refs:
+            max_conf = max((fmap[i].confianca for i in refs if i in fmap), default=0.0)
+            try:
+                o["evidence_confidence"] = min(float(o.get("evidence_confidence", max_conf)), max_conf)
+            except Exception:
+                o["evidence_confidence"] = max_conf
+            o["evidence_ids"] = sorted(set(refs))
+            oportunidades_validas.append(o)
+    pacote["oportunidades"] = oportunidades_validas
+
+
+    # Saneamento de concorrência
     concorrentes_validos = []
     corpus = " ".join(f.texto() for f in fontes).lower()
     for c in pacote.get("concorrencia", []) or []:
@@ -106,9 +145,11 @@ def validar_pacote(pacote: Dict[str, Any], fontes: Sequence[Fonte]) -> Dict[str,
             c["evidence_ids"] = sorted(set(refs))
             concorrentes_validos.append(c)
     pacote["concorrencia"] = concorrentes_validos
+
     return {
-        "valido": ok and bool(sinais_validos),
+        "valido": ok and bool(sinais_validos or oportunidades_validas),
         "sinais": len(sinais_validos),
+        "oportunidades": len(oportunidades_validas),
         "motivo": reason,
         "ids_validos": len(ids),
     }

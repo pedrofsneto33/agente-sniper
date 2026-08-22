@@ -127,8 +127,8 @@ class TestObservability(unittest.TestCase):
         self.assertEqual(res_db["hash"], h)
 
     def test_09_logger_fail_safe_sem_afetar_extracao(self):
-        """9. Garante que falha no arquivo de log n?o lan?a exce??o para o chamador."""
-        invalid_tracker = OperationalMetricsTracker(Path(r"Z:\diretorio_invalido_inexistente\log.jsonl"))
+        """9. Garante que falha no arquivo de log não lança exceção para o chamador."""
+        invalid_tracker = OperationalMetricsTracker(Path(r"//invalid_server_xyz/invalid_share/log.jsonl"))
         sucesso = invalid_tracker.registrar_execucao(OperationalRunRecord(run_id="test_failsafe"))
         self.assertFalse(sucesso)
 
